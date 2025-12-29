@@ -1,239 +1,204 @@
-import fs from "fs";
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import AudioFile from "../models/AudioFile.js";
 import Report from "../models/Report.js";
+import AudioFile from "../models/AudioFile.js";
+import fs from "fs";
 import path from "path";
 
-// Helper: Convert file to Base64 for Gemini
-function fileToGenerativePart(pathStr, mimeType) {
-  return {
-    inlineData: {
-      data: Buffer.from(fs.readFileSync(pathStr)).toString("base64"),
-      mimeType
-    },
-  };
-}
+// CONFIG & HELPERS
+const getGeminiModel = () => {
+  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+  return genAI.getGenerativeModel({
+    model: "gemini-2.5-flash",
+    generationConfig: { responseMimeType: "application/json" } // Force JSON
+  });
+};
 
-// Helper: Clean JSON string (remove markdown wrappers)
-function cleanJSON(text) {
-  return text.replace(/```json/g, "").replace(/```/g, "").trim();
-}
+const getMimeType = (filename) => {
+  if (filename.endsWith(".mp3")) return "audio/mp3";
+  if (filename.endsWith(".wav")) return "audio/wav";
+  if (filename.endsWith(".m4a")) return "audio/m4a";
+  return "audio/mp3";
+};
 
-// =====================================================
-// 1. GENERATE REPORT (Dual Output + Memory)
-// =====================================================
-export const generateReport = async (req, res) => {
-  try {
-    const { audio_id, parent_report_id } = req.body;
+// CORE LOGIC: THE MASTER PROMPT
+// We extract this into a function so both Create and Append can use it.
+const generateAnalysis = async (audioFiles, conversationType, objective) => {
+  const model = getGeminiModel();
+  const parts = [];
 
-    if (!audio_id) return res.status(400).json({ message: "audio_id required" });
-
-    // Fetch audio
-    const audio = await AudioFile.findOne({ _id: audio_id, user_id: req.user._id });
-    if (!audio) return res.status(404).json({ message: "Audio not found or access denied" });
-    if (!fs.existsSync(audio.file_path))
-      return res.status(404).json({ message: "Audio file missing from disk" });
-
-    // Recursive Context Logic
-    let contextPrompt = "";
-    let newVersion = 1;
-
-    if (parent_report_id) {
-      const previousReport = await Report.findOne({
-        _id: parent_report_id,
-        user_id: req.user._id
+  // 1. Attach ALL Audio Files
+  for (const file of audioFiles) {
+    // Read file from disk
+    if (fs.existsSync(file.file_path)) {
+      const base64Data = fs.readFileSync(file.file_path).toString("base64");
+      parts.push({
+        inlineData: {
+          mimeType: getMimeType(file.original_name),
+          data: base64Data
+        }
       });
+    }
+  }
 
-      if (previousReport) {
-        console.log(`🔗 Linking previous report v${previousReport.version}`);
-        newVersion = previousReport.version + 1;
+  // 2. The Prompt (Strict Constraints)
+  const prompt = `
+    ROLE: You are an expert Conflict Resolution Specialist.
+    CONTEXT: Analyze the attached audio recordings of a ${conversationType} dispute.
+    USER GOAL: "${objective || "Resolve the conflict and find harmony."}"
 
-        // ⚡ MEMORY OPTIMIZATION: Use chat_context first
-        const previousContextData =
-          previousReport.chat_context || previousReport.analysis_content;
+    TASK: Generate a structured JSON report.
+    STRICT CONSTRAINTS:
+    1. OUTPUT MUST BE PURE JSON.
+    2. "emotional_intensity": Identify speakers (Speaker 1, Speaker 2, etc.) and give a score (0-100).
+    3. "advice": Must have 3 specific categories (Quick Fixes, Better Communication, Long Term Harmony).
+    4. "formatting":
+       - Use bullet points for summary.
+       - FOR ADVICE: Provide 2-3 actionable points per category.
+       - CRITICAL: Maximum 20-25 words per point. Be concise and expert.
 
-        contextPrompt = `
-        === PREVIOUS CONTEXT SUMMARY ===
-        ${previousContextData}
-        ==========================================
-        INSTRUCTIONS:
-        The new audio file continues the same story.
-        1. Compare new events with the context above.
-        2. Identify escalation or improvement.
-        3. Adjust psychological analysis.
-        `;
-      } else {
-        console.warn(`Parent report ${parent_report_id} not found. Starting fresh chain.`);
-      }
+    JSON STRUCTURE:
+    {
+      "conflict_score": 7,
+      "emotional_intensity": [
+        { "speaker_label": "Main Speaker (Aggressive)", "score": 85 },
+        { "speaker_label": "Secondary Speaker (Passive)", "score": 40 }
+      ],
+      "summary_points": ["Point 1", "Point 2"],
+      "advice": {
+        "quick_fixes": ["Detailed point 1 (Max 25 words)", "Detailed point 2"],
+        "better_communication": ["Tip 1", "Tip 2"],
+        "long_term_harmony": ["Strategy 1", "Strategy 2"]
+      },
+      "suggested_replies": ["Suggestion 1", "Suggestion 2"]
+    }
+  `;
+
+  parts.push({ text: prompt });
+
+  // 3. Call Gemini
+  const result = await model.generateContent({
+    contents: [{ role: "user", parts: parts }]
+  });
+
+  return JSON.parse(result.response.text());
+};
+
+// 1. CREATE NEW REPORT (Multiple Audios)
+export const createReport = async (req, res) => {
+  try {
+    const { conversation_type, objective } = req.body;
+    const files = req.files; // Array of files
+
+    if (!files || files.length === 0) {
+      return res.status(400).json({ message: "Upload at least one audio file." });
+    }
+    if (!conversation_type) {
+      return res.status(400).json({ message: "Conversation type is required." });
     }
 
-    // ============================================================
-    // FINAL PROMPT — Dual Output (JSON Report + Text Memory)
-    // ============================================================
-    const finalPrompt = `
-      ${contextPrompt}
+    // A. Save Audios to DB
+    const audioDocs = [];
+    for (const file of files) {
+      const audio = await AudioFile.create({
+        user_id: req.user._id,
+        file_path: file.path,
+        original_name: file.originalname,
+        mimetype: file.mimetype,
+        size: file.size
+      });
+      audioDocs.push(audio);
+    }
 
-      ROLE: Expert Conflict Resolution Specialist.
+    // B. Generate Analysis
+    console.log(`Analyzing ${files.length} files...`);
+    const analysis = await generateAnalysis(audioDocs, conversation_type, objective);
 
-      TASK: Analyze the audio in TWO OUTPUT PARTS.
-      Separate them with this EXACT separator:
-      "|||AI_MEMORY_SEPARATOR|||"
-
-      ============================================================
-      PART 1 — STRICT JSON REPORT (NO MARKDOWN)
-      ============================================================
-      RULES FOR SPEAKERS:
-      - Identify speakers by NAME ONLY if clearly spoken.
-      - Otherwise use "Speaker 1", "Speaker 2".
-      - Don't guess names from context.
-
-      Return JSON ONLY:
-      {
-        "executive_summary": "",
-        "speaker_dynamics": {
-          "identified_speakers": [
-            {
-              "label": "Name or Speaker #",
-              "emotional_state": "",
-              "psychology_analysis": ""
-            }
-          ]
-        },
-        "root_cause_analysis": "",
-        "conflict_score": {
-          "score": 0,
-          "justification": ""
-        },
-        "strategic_resolution_plan": {
-          "immediate_action": "",
-          "psychological_techniques": "",
-          "long_term_fix": ""
-        },
-        "version_reference": "${newVersion}",
-        "has_previous_context": ${parent_report_id ? "true" : "false"}
-      }
-
-      |||AI_MEMORY_SEPARATOR|||
-
-      ============================================================
-      PART 2 — AI MEMORY (PLAIN TEXT, < 200 WORDS)
-      ============================================================
-      Include ONLY:
-      - Speakers & roles
-      - Current emotional state
-      - The conflict summary
-      - Key events
-      - No JSON. No lists. Just plain concise text.
-    `;
-
-    console.log(`Sending ${audio.original_name} to Gemini...`);
-
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel(
-      { model: "gemini-2.5-flash" },
-      { timeout: 300000 }
-    );
-
-    const mimeType = audio.mimetype || "audio/mpeg";
-    const audioPart = fileToGenerativePart(audio.file_path, mimeType);
-
-    const result = await model.generateContent([finalPrompt, audioPart]);
-    const response = await result.response;
-    const fullText = response.text();
-
-    console.log("Gemini Analysis Complete!");
-
-    // ===============================
-    // SPLIT OUTPUT
-    // ===============================
-    const parts = fullText.split("|||AI_MEMORY_SEPARATOR|||");
-
-    let rawJson = cleanJSON(parts[0]?.trim() || "");
-    let aiMemory = parts[1]?.trim() || rawJson.substring(0, 500);
-
-    // ===============================
-    // SAVE TO DATABASE
-    // ===============================
-    const newReport = await Report.create({
+    // C. Save Report
+    const report = await Report.create({
       user_id: req.user._id,
-      audio_id: audio._id,
-      analysis_content: rawJson, // The Big JSON
-      chat_context: aiMemory,    // The Small Memory
-      version: newVersion,
-      parent_report_id: parent_report_id || null
+      audio_ids: audioDocs.map(a => a._id),
+      conversation_type,
+      objective,
+      title: `${conversation_type} Analysis`,
+      // Mapping Gemini JSON to our Schema
+      conflict_score: analysis.conflict_score,
+      emotional_intensity: analysis.emotional_intensity,
+      summary_points: analysis.summary_points,
+      advice: analysis.advice,
+      suggested_replies: analysis.suggested_replies
     });
 
-    // ===============================
-    // SAVE JSON REPORT TO DISK (Optional but useful for you)
-    // ===============================
-    try {
-      const reportsDir = path.join(process.cwd(), "reports");
-      if (!fs.existsSync(reportsDir))
-        fs.mkdirSync(reportsDir, { recursive: true });
+    res.status(201).json({ message: "Report generated successfully", report });
 
-      const jsonFilename = `report-${newReport._id}.json`;
-      const jsonPath = path.join(reportsDir, jsonFilename);
+  } catch (err) {
+    console.error("Create Report Error:", err);
+    res.status(500).json({ message: "Failed to analyze audio" });
+  }
+};
 
-      fs.writeFileSync(
-        jsonPath,
-        JSON.stringify(JSON.parse(rawJson), null, 2)
-      );
+// 2. APPEND AUDIO (Re-Analyze)
+export const appendAudio = async (req, res) => {
+  try {
+    const { report_id } = req.body;
+    const file = req.file; // The ONE new file
 
-      console.log(`✔ Report JSON saved at ${jsonPath}`);
-    } catch (error) {
-      console.error("⚠ Failed saving JSON report:", error.message);
+    if (!report_id || !file) {
+      return res.status(400).json({ message: "Report ID and Audio File required." });
     }
 
-    return res.json({ message: "Report generated", report: newReport });
-
-  } catch (err) {
-    console.error("Generate Error:", err.message);
-    return res
-      .status(500)
-      .json({ message: "Failed to generate report", error: err.message });
-  }
-};
-
-// ======== GETTERS ========
-
-export const getLatestReport = async (req, res) => {
-  try {
-    const report = await Report.findOne({ user_id: req.user._id })
-      .sort({ createdAt: -1 })
-      .populate("audio_id", "original_name");
-
-    if (!report) return res.status(404).json({ message: "No reports found" });
-
-    res.json(report);
-  } catch (err) {
-    res.status(500).json({ message: "Server error" });
-  }
-};
-
-export const getReportById = async (req, res) => {
-  try {
-    const report = await Report.findOne({
-      _id: req.params.id,
-      user_id: req.user._id
-    }).populate("audio_id", "original_name");
-
+    // A. Find Report
+    const report = await Report.findById(report_id).populate("audio_ids");
     if (!report) return res.status(404).json({ message: "Report not found" });
 
-    res.json(report);
+    // B. Save NEW Audio
+    const newAudio = await AudioFile.create({
+      user_id: req.user._id,
+      file_path: file.path,
+      original_name: file.originalname,
+      mimetype: file.mimetype,
+      size: file.size
+    });
+
+    // C. Combine Old Audios + New Audio
+    // report.audio_ids is an array of objects because of .populate()
+    const allAudioDocs = [...report.audio_ids, newAudio];
+
+    // D. Re-Analyze EVERYTHING (The "Combined Report" feature)
+    console.log(`Re-Analyzing ${allAudioDocs.length} files...`);
+    const analysis = await generateAnalysis(allAudioDocs, report.conversation_type, report.objective);
+
+    // E. Update Report with NEW Analysis
+    report.audio_ids.push(newAudio._id); // Add just the ID to the list
+    report.conflict_score = analysis.conflict_score;
+    report.emotional_intensity = analysis.emotional_intensity;
+    report.summary_points = analysis.summary_points;
+    report.advice = analysis.advice;
+    report.suggested_replies = analysis.suggested_replies;
+    await report.save();
+
+    res.json({ message: "Report updated with new context", report });
+
   } catch (err) {
-    res.status(500).json({ message: "Server error" });
+    console.error("Append Error:", err);
+    res.status(500).json({ message: "Failed to update report" });
   }
 };
 
-export const getReportHistory = async (req, res) => {
+export const getReports = async (req, res) => {
   try {
-    const reports = await Report.find({ user_id: req.user._id })
-      .sort({ createdAt: -1 })
-      .select("version createdAt audio_id")
-      .populate("audio_id", "original_name");
-
-    res.json({ reports });
+    const reports = await Report.find({ user_id: req.user._id }).sort({ createdAt: -1 });
+    res.json(reports);
   } catch (err) {
-    res.status(500).json({ message: "Failed to fetch history" });
+    res.status(500).json({ message: "Error fetching reports" });
+  }
+};
+
+export const getReport = async (req, res) => {
+  try {
+    const report = await Report.findById(req.params.id).populate("audio_ids");
+    if (!report) return res.status(404).json({ message: "Report not found" });
+    res.json(report);
+  } catch (err) {
+    res.status(500).json({ message: "Error fetching report" });
   }
 };

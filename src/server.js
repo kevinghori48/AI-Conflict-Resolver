@@ -9,88 +9,49 @@ console.log("Loaded MONGO_URI:", process.env.MONGO_URI);
 
 const PORT = process.env.PORT || 5000;
 
-// 3. CREATE DUAL SERVER (HTTP + SOCKET)
+// 1. CREATE DUAL SERVER (HTTP + SOCKET)
 // We wrap the Express 'app' in a standard HTTP server
-// This allows them to share the same port (5000).
 const server = http.createServer(app);
 
 // Initialize Socket.io
 const io = new Server(server, {
   cors: {
-    origin: "*", // Allow all connections (Change this to your frontend URL later)
+    origin: "*", // Allow all connections (for development)
     methods: ["GET", "POST"]
   }
 });
 
-// 4. ATTACH IO TO EXPRESS
-// Since app.js is already loaded, we use 'app.set' to make 'io' accessible globally.
-// In your controllers, you will call: req.app.get("io")
-app.set("io", io);
+// 2. ATTACH IO TO REQUESTS (Global Access)
+// This magic line makes 'req.io' available in ALL your controllers
+// independently of middleware order.
+app.request.io = io;
 
-// 5. SOCKET CONNECTION LOGIC
+// 3. SOCKET LOGIC (The Real-Time Brain)
 io.on("connection", (socket) => {
   console.log(`New Client Connected: ${socket.id}`);
 
-  // Join a specific room (based on Report ID)
-  socket.on("join_room", (report_id) => {
-    socket.join(report_id);
-    console.log(`User ${socket.id} joined room: ${report_id}`);
+  // A. Join a Dispute Room (Lobby)
+  socket.on("join_room", (dispute_id) => {
+    socket.join(dispute_id);
+    console.log(`User ${socket.id} joined room: ${dispute_id}`);
+
+    // Notify others in the room
+    socket.to(dispute_id).emit("user_joined", { message: "Opponent has entered the arena." });
+  });
+
+  // B. Start the Timer (Synchronized)
+  socket.on("start_timer", (dispute_id) => {
+    console.log(`Timer started for room: ${dispute_id}`);
+    // Broadcast to EVERYONE in the room (including sender) to start counting
+    io.in(dispute_id).emit("timer_start", { duration: 30 });
   });
 
   socket.on("disconnect", () => {
-    console.log("User disconnected");
+    console.log("User disconnected", socket.id);
   });
 });
 
-// 6. START SERVER
+// 4. START SERVER
 server.listen(PORT, () => {
   console.log(`Server (HTTP + Socket) running on port ${PORT}`);
 });
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// import dotenv from "dotenv";
-// import express from "express";
-// import path from "path";
-// import { fileURLToPath } from "url";
-// import app from "./app.js";
-
-// dotenv.config();
-
-// // 4. Define __dirname (Required for ES Modules)
-// const __filename = fileURLToPath(import.meta.url);
-// const __dirname = path.dirname(__filename);
-
-// console.log("Loaded MONGO_URI:", process.env.MONGO_URI);
-
-// // 5. Serve Static Files from the "public" folder
-// // This makes http://localhost:5000/ show your index.html
-// app.use(express.static(path.join(__dirname, "../public")));
-
-// const PORT = process.env.PORT || 5000;
-
-// app.listen(PORT, () => {
-//   console.log(`Server running on port ${PORT}`);
-//   console.log(`Frontend accessible at http://localhost:${PORT}`);
-// });

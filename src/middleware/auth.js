@@ -5,7 +5,6 @@ const auth = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
     console.log("Auth header:", authHeader);
-    
     const token = authHeader?.replace("Bearer ", "");
 
     if (!token) {
@@ -15,11 +14,9 @@ const auth = async (req, res, next) => {
 
     console.log("Token:", token);
     console.log("JWT_SECRET:", process.env.JWT_SECRET);
-    
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     console.log("Decoded:", decoded);
-    
-    req.user = await User.findById(decoded._id).select("-password");
+    req.user = await User.findById(decoded._id);
 
     if (!req.user) {
       console.log("User not found");

@@ -1,22 +1,37 @@
 import mongoose from "mongoose";
 
-const reportSchema = new mongoose.Schema(
-  {
-    user_id: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-    audio_id: { type: mongoose.Schema.Types.ObjectId, ref: "AudioFile", required: true },
+const reportSchema = new mongoose.Schema({
+  user_id: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
 
-    // 1. FOR HUMANS (Full UI Report - JSON)
-    analysis_content: { type: String, required: true },
+  audio_ids: [{ type: mongoose.Schema.Types.ObjectId, ref: "AudioFile" }],
 
-    // 2. FOR AI MEMORY (Compressed Context - Text)
-    // THIS IS CRITICAL for your new Memory Management feature!
-    chat_context: { type: String },
-
-    version: { type: Number, default: 1 },
-    parent_report_id: { type: mongoose.Schema.Types.ObjectId, ref: "Report", default: null },
-    model_used: { type: String, default: "gemini-2.5-flash" },
+  title: { type: String, default: "Conflict Analysis" },
+  conversation_type: {
+    type: String,
+    required: true,
+    enum: ["Relationship", "Work", "Family", "Friendship", "Other"]
   },
-  { timestamps: true }
-);
+  objective: { type: String, default: "General resolution" },
+
+  conflict_score: { type: Number, required: true },
+  emotional_intensity: [
+    {
+      speaker_label: { type: String, required: true },
+      score: { type: Number, required: true }
+    }
+  ],
+
+  advice: {
+    quick_fixes: [{ type: String }],
+    better_communication: [{ type: String }],
+    long_term_harmony: [{ type: String }]
+  },
+
+  summary_points: [{ type: String }],
+
+  suggested_replies: [{ type: String }],
+
+  createdAt: { type: Date, default: Date.now }
+});
 
 export default mongoose.model("Report", reportSchema);
