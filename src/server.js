@@ -41,7 +41,7 @@ io.on("connection", (socket) => {
 
   // B. Start the Timer (Synchronized)
   socket.on("start_timer", (room_id) => {
-    console.log(`⏳ Timer started for room: ${room_id}`);
+    console.log(`Timer started for room: ${room_id}`);
     // Broadcast to EVERYONE in the room (including sender) to start counting
     io.in(room_id).emit("timer_start", { duration: 30 }); 
   });
