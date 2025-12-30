@@ -7,8 +7,7 @@ const officialDisputeSchema = new mongoose.Schema({
 
   // Invite System
   invite_code: { type: String, required: true, unique: true },
-
-  // Intake & Context (Screen 1 & 2)
+  // Intake & Context
   relationship_type: {
     type: String,
     enum: ["couple", "roommate", "workplace", "money", "custom"],
@@ -16,30 +15,30 @@ const officialDisputeSchema = new mongoose.Schema({
   },
   intake_data: {
     goal: String,
-    urgency: String, // e.g., "Low", "High"
+    urgency: String,
     is_negotiable: Boolean,
     negotiation_points: String,
-    preset_answers: [{ question: String, answer: String }] // The 3-5 questions
+    preset_answers: [{ question: String, answer: String }]
   },
   intake_audio: { type: mongoose.Schema.Types.ObjectId, ref: "AudioFile" },
 
-  // Fairness Agreement (Screen 3)
+  // Fairness Agreement
   fairness_signatures: {
     creator_signed: { type: Boolean, default: false },
     joiner_signed: { type: Boolean, default: false }
   },
 
-  // The State Machine
+  // State Machine
   status: {
     type: String,
     enum: [
-      "PRE_DISPUTE",       // Waiting for B
-      "FAIRNESS_CHECK",    // Waiting for signatures
-      "ROUND_1_INPUT",     // Recording main arguments
-      "ROUND_1_ANALYSIS",  // AI Processing Understanding
-      "ROUND_1_CONFIRMATION", // Waiting for users to agree with AI summary
-      "ROUND_2_OPTIONS",   // Viewing/Selecting Options
-      "ROUND_3_PLAN",      // Reviewing Action Plan
+      "PRE_DISPUTE",
+      "FAIRNESS_CHECK",
+      "ROUND_1_INPUT",
+      "ROUND_1_ANALYSIS",
+      "ROUND_1_CONFIRMATION",
+      "ROUND_2_OPTIONS",
+      "ROUND_3_PLAN",
       "COMPLETED"
     ],
     default: "PRE_DISPUTE"
@@ -53,10 +52,9 @@ const officialDisputeSchema = new mongoose.Schema({
     joiner_text: String
   },
   round_1_result: {
-    summaries: { creator: String, joiner: String }, // "What they are really saying"
-    common_ground: [String] // Points both agree on
+    summaries: { creator: String, joiner: String },
+    common_ground: [String]
   },
-  //Confirmation Logic
   round_1_confirmation: {
     creator_agreed: { type: Boolean, default: false },
     joiner_agreed: { type: Boolean, default: false }
@@ -64,31 +62,30 @@ const officialDisputeSchema = new mongoose.Schema({
 
   // Round 2: Options
   round_2_options: [{
-    id: String, // "A", "B", "C"
+    id: String,
     title: String,
     description: String,
     pros: { creator: String, joiner: String },
     cons: { creator: String, joiner: String },
-    type: String // "Creator Focused", "Joiner Focused", "Balanced"
+    type: { type: String }
   }],
-  //Multi-Select Logic
   round_2_selections: {
     creator_selected_ids: [String],
     joiner_selected_ids: [String]
   },
-  final_selected_option_ids: [String], // The options that made it to the final plan
+  final_selected_option_ids: [String],
 
   // Round 3: Action Plan
   round_3_plan: {
     tasks: [{
-      who: String, // "Creator" or "Joiner"
+      who: String,
       what: String,
       by_when: String
     }],
     suggestions: {
-      short_term: [String],  // "Immediate"
-      medium_term: [String], // "Next few weeks"
-      long_term: [String]    // "Long term habits"
+      short_term: [String],
+      medium_term: [String],
+      long_term: [String]
     },
     final_signatures: {
       creator: { type: Boolean, default: false },
