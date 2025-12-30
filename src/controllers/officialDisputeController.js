@@ -4,9 +4,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import crypto from "crypto";
 import fs from "fs";
 
-// ==========================================
 // CONFIG: Relationship Presets
-// ==========================================
 const PRESETS = {
   couple: {
     system_role: "Relationship Therapist",
@@ -34,19 +32,42 @@ const generateCode = () => crypto.randomBytes(3).toString("hex").toUpperCase();
 
 const getGeminiModel = () => {
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-  return genAI.getGenerativeModel({
+  return genAI.getGenerativeModel({ 
     model: "gemini-2.5-flash",
     generationConfig: { responseMimeType: "application/json" }
   });
 };
 
-// ==========================================
-// 1. CREATE DISPUTE (Screen 1 & 2)
-// ==========================================
+// HELPER: Clean AI Response
+const cleanAIResponse = (text) => {
+  try {
+    // 1. Remove Markdown code blocks
+    let cleanText = text.replace(/```json/g, "").replace(/```/g, "").trim();
+    
+    // 2. Parse the main JSON
+    let json = JSON.parse(cleanText);
+
+    // 3. SPECIAL FIX: If 'options' or 'tasks' are stringified inside, parse them
+    if (json.options && typeof json.options === "string") {
+        json.options = JSON.parse(json.options);
+    }
+    if (json.tasks && typeof json.tasks === "string") {
+        json.tasks = JSON.parse(json.tasks);
+    }
+
+    return json;
+  } catch (err) {
+    console.error("JSON Parse Failed for text:", text);
+    throw new Error("AI returned invalid JSON format. Check terminal for details.");
+  }
+};
+
+// 1. CREATE DISPUTE
 export const createDispute = async (req, res) => {
   try {
     const { relationship_type, intake_data } = req.body;
     const code = generateCode();
+    
     let audioId = null;
     if (req.file) {
       const audio = await AudioFile.create({
@@ -68,10 +89,10 @@ export const createDispute = async (req, res) => {
       status: "PRE_DISPUTE"
     });
 
-    res.status(201).json({
-      message: "Official Dispute Started",
-      invite_code: code,
-      dispute_id: dispute._id
+    res.status(201).json({ 
+      message: "Official Dispute Started", 
+      invite_code: code, 
+      dispute_id: dispute._id 
     });
 
   } catch (err) {
@@ -80,9 +101,7 @@ export const createDispute = async (req, res) => {
   }
 };
 
-// ==========================================
-// 2. JOIN DISPUTE (Screen 4)
-// ==========================================
+// 2. JOIN DISPUTE
 export const joinDispute = async (req, res) => {
   try {
     const { invite_code } = req.body;
@@ -103,9 +122,7 @@ export const joinDispute = async (req, res) => {
   }
 };
 
-// ==========================================
-// 3. SIGN FAIRNESS AGREEMENT (Screen 3)
-// ==========================================
+// 3. SIGN FAIRNESS AGREEMENT
 export const signFairness = async (req, res) => {
   try {
     const { dispute_id } = req.body;
@@ -118,7 +135,7 @@ export const signFairness = async (req, res) => {
     }
 
     if (dispute.fairness_signatures.creator_signed && dispute.fairness_signatures.joiner_signed) {
-      dispute.status = "ROUND_1_INPUT";
+      dispute.status = "ROUND_1_INPUT"; 
       if (req.io) req.io.to(dispute_id).emit("status_update", { status: "ROUND_1_INPUT", message: "Fairness Signed. Starting Round 1." });
     }
 
@@ -130,9 +147,7 @@ export const signFairness = async (req, res) => {
   }
 };
 
-// ==========================================
-// 4. SUBMIT ROUND 1 INPUT (Screen 5 - Round 1)
-// ==========================================
+// 4. SUBMIT ROUND 1 INPUT
 export const submitRound1 = async (req, res) => {
   try {
     const { dispute_id, text_input } = req.body;
@@ -161,22 +176,32 @@ export const submitRound1 = async (req, res) => {
 
     await dispute.save();
 
-    // CHECK: Are both inputs ready? (Logic: checks if both have sent audio)
-    if (dispute.round_1_inputs.creator_audio && dispute.round_1_inputs.joiner_audio) {
+    const creatorReady = dispute.round_1_inputs.creator_audio || dispute.round_1_inputs.creator_text;
+    const joinerReady = dispute.round_1_inputs.joiner_audio || dispute.round_1_inputs.joiner_text;
+
+    if (creatorReady && joinerReady) {
+      
       dispute.status = "ROUND_1_ANALYSIS";
       await dispute.save();
+      
       if (req.io) req.io.to(dispute_id).emit("processing_start", { message: "Analyzing perspectives..." });
 
-      // === RUN AI ROUND 1 ===
       const analysis = await runRound1AI(dispute);
+      
       dispute.round_1_result = analysis;
-      dispute.status = "ROUND_1_CONFIRMATION"; // Wait for user approval
+      dispute.status = "ROUND_1_CONFIRMATION"; 
       await dispute.save();
 
       if (req.io) req.io.to(dispute_id).emit("round_1_complete", { result: analysis, status: "ROUND_1_CONFIRMATION" });
+
+      return res.json({ 
+          message: "Round 1 Analysis Complete", 
+          result: analysis, 
+          status: "ROUND_1_CONFIRMATION" 
+      });
     }
 
-    res.json({ message: "Input received" });
+    res.json({ message: "Input received. Waiting for opponent." });
 
   } catch (err) {
     console.error(err);
@@ -184,48 +209,97 @@ export const submitRound1 = async (req, res) => {
   }
 };
 
-// ==========================================
-// 5. CONFIRM ROUND 1 (User Agreement)
-// ==========================================
+// 5. CONFIRM ROUND 1
 export const confirmRound1 = async (req, res) => {
   try {
     const { dispute_id } = req.body;
+    console.log(`Attempting confirm for Dispute ID: ${dispute_id}`);
+
     const dispute = await OfficialDispute.findById(dispute_id);
+    if (!dispute) return res.status(404).json({ message: "Dispute not found" });
 
     if (req.user._id.toString() === dispute.creator_id.toString()) {
       dispute.round_1_confirmation.creator_agreed = true;
+      console.log("Creator Agreed");
     } else {
       dispute.round_1_confirmation.joiner_agreed = true;
+      console.log("Joiner Agreed");
     }
 
-    // Only proceed if BOTH agree
     if (dispute.round_1_confirmation.creator_agreed && dispute.round_1_confirmation.joiner_agreed) {
-        // Trigger AI for Round 2 Options
+        console.log("Both confirmed. Starting Round 2 AI...");
+        
+        if (!dispute.round_1_result || !dispute.round_1_result.summaries) {
+             console.error("CRITICAL: Round 1 Result missing!");
+             return res.status(500).json({ message: "Round 1 data missing. Cannot generate Round 2." });
+        }
+
         if (req.io) req.io.to(dispute_id).emit("processing_start", { message: "Generating options..." });
-        const options = await runRound2AI(dispute);
-        dispute.round_2_options = options.options;
-        dispute.status = "ROUND_2_OPTIONS";
-        await dispute.save();
-        if (req.io) req.io.to(dispute_id).emit("status_update", {
-            status: "ROUND_2_OPTIONS",
-            data: options.options
-        });
+        
+        try {
+            const options = await runRound2AI(dispute);
+            console.log("Round 2 AI Success");
+            
+            dispute.round_2_options = options.options;
+            dispute.status = "ROUND_2_OPTIONS";
+            
+            await dispute.save();
+            
+            if (req.io) req.io.to(dispute_id).emit("status_update", { 
+                status: "ROUND_2_OPTIONS", 
+                data: options.options 
+            });
+
+        } catch (aiError) {
+            console.error("AI GENERATION FAILED:", aiError);
+            throw new Error("Gemini API Error during Round 2");
+        }
     } else {
         await dispute.save();
+        console.log("Waiting for other user...");
     }
 
     res.json({ message: "Confirmation received" });
   } catch (err) {
-    res.status(500).json({ message: "Confirmation failed" });
+    console.error("ERROR IN CONFIRM ROUND 1:", err);
+    res.status(500).json({ message: "Confirmation failed", error: err.message });
   }
 };
 
-// ==========================================
-// 6. SUBMIT ROUND 2 (Multi-Select Options)
-// ==========================================
+// 5.5 MODIFY ROUND 1
+export const modifyRound1 = async (req, res) => {
+  try {
+    const { dispute_id, feedback } = req.body;
+    const dispute = await OfficialDispute.findById(dispute_id);
+
+    dispute.round_1_confirmation.creator_agreed = false;
+    dispute.round_1_confirmation.joiner_agreed = false;
+    
+    if (req.io) req.io.to(dispute_id).emit("processing_start", { message: "Updating analysis..." });
+
+    const newAnalysis = await runRound1AI_Correction(dispute, feedback);
+    
+    dispute.round_1_result = newAnalysis;
+    await dispute.save();
+
+    if (req.io) req.io.to(dispute_id).emit("round_1_complete", { 
+        result: newAnalysis, 
+        message: "Analysis updated." 
+    });
+
+    res.json({ message: "Correction processed", result: newAnalysis });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Correction failed" });
+  }
+};
+
+
+// 6. SUBMIT ROUND 2 (Selection)
 export const submitRound2Selection = async (req, res) => {
   try {
-    const { dispute_id, selected_ids } = req.body; // Array e.g. ["A", "C"]
+    const { dispute_id, selected_ids } = req.body;
     const dispute = await OfficialDispute.findById(dispute_id);
 
     if (req.user._id.toString() === dispute.creator_id.toString()) {
@@ -239,24 +313,24 @@ export const submitRound2Selection = async (req, res) => {
     const c_ids = dispute.round_2_selections.creator_selected_ids;
     const j_ids = dispute.round_2_selections.joiner_selected_ids;
 
-    // Check if both have voted
     if (c_ids.length > 0 && j_ids.length > 0) {
-        // Logic: Combine all selected options to find a comprehensive plan
-        // You could also look for intersection (c_ids.filter(x => j_ids.includes(x)))
-        // For now, we take the UNION of choices to be inclusive
-        const final_ids = [...new Set([...c_ids, ...j_ids])];
+        let final_ids = c_ids.filter(id => j_ids.includes(id));
+        if (final_ids.length === 0) final_ids = [...new Set([...c_ids, ...j_ids])];
+
         dispute.final_selected_option_ids = final_ids;
 
-        // Trigger AI for Round 3 Plan
         if (req.io) req.io.to(dispute_id).emit("processing_start", { message: "Drafting Action Plan..." });
+        
         const plan = await runRound3AI(dispute);
+        
         dispute.round_3_plan.tasks = plan.tasks;
         dispute.round_3_plan.suggestions = plan.suggestions;
         dispute.status = "ROUND_3_PLAN";
+        
         await dispute.save();
 
-        if (req.io) req.io.to(dispute_id).emit("status_update", {
-            status: "ROUND_3_PLAN",
+        if (req.io) req.io.to(dispute_id).emit("status_update", { 
+            status: "ROUND_3_PLAN", 
             data: dispute.round_3_plan
         });
     }
@@ -267,36 +341,79 @@ export const submitRound2Selection = async (req, res) => {
   }
 };
 
+// 6.5 MODIFY ROUND 3
+export const modifyRound3 = async (req, res) => {
+  try {
+    const { dispute_id, feedback } = req.body; 
+    const dispute = await OfficialDispute.findById(dispute_id);
 
-// ==========================================
-// AI HELPERS
-// ==========================================
+    dispute.round_3_plan.final_signatures.creator = false;
+    dispute.round_3_plan.final_signatures.joiner = false;
 
+    if (req.io) req.io.to(dispute_id).emit("processing_start", { message: "Refining Action Plan..." });
+
+    const newPlan = await runRound3AI_Correction(dispute, feedback);
+
+    dispute.round_3_plan.tasks = newPlan.tasks;
+    await dispute.save();
+
+    if (req.io) req.io.to(dispute_id).emit("status_update", { 
+        status: "ROUND_3_PLAN", 
+        data: dispute.round_3_plan,
+        message: "Plan updated based on feedback."
+    });
+
+    res.json({ message: "Plan refined", plan: newPlan });
+
+  } catch (err) {
+    res.status(500).json({ message: "Modification failed" });
+  }
+};
+
+// AI FUNCTIONS
 async function runRound1AI(dispute) {
   const model = getGeminiModel();
   const preset = PRESETS[dispute.relationship_type];
-
-  // Note: Add logic here to read audio files (using fs.readFileSync) like in SmallDispute
-  // For now, assuming audio content is passed or processed similarly
-
+  
   const prompt = `
     ROLE: You are a ${preset.system_role}.
     OBJECTIVE: ${preset.objective}
+    
     INPUT: Two user arguments (Creator vs Joiner).
-
+    creator: "${dispute.round_1_inputs.creator_text || 'Audio Input'}"
+    joiner: "${dispute.round_1_inputs.joiner_text || 'Audio Input'}"
+    
     TASK: Round 1 - Understanding.
     1. Summarize "What User A is really saying" (their core need).
     2. Summarize "What User B is really saying".
     3. Find "Common Ground" (3 bullet points).
+    
     OUTPUT JSON:
     {
       "summaries": { "creator": "...", "joiner": "..." },
       "common_ground": ["...", "...", "..."]
     }
   `;
+  const result = await model.generateContent(prompt); 
+  return cleanAIResponse(result.response.text());
+}
 
+async function runRound1AI_Correction(dispute, feedback) {
+  const model = getGeminiModel();
+  const prompt = `
+    ROLE: Conflict Mediator.
+    PREVIOUS ANALYSIS: ${JSON.stringify(dispute.round_1_result)}
+    USER FEEDBACK: "${feedback}"
+    
+    TASK: Update summaries/common ground based on feedback.
+    OUTPUT JSON (Same structure):
+    {
+      "summaries": { "creator": "...", "joiner": "..." },
+      "common_ground": ["...", "...", "..."]
+    }
+  `;
   const result = await model.generateContent(prompt);
-  return JSON.parse(result.response.text());
+  return cleanAIResponse(result.response.text());
 }
 
 async function runRound2AI(dispute) {
@@ -309,42 +426,48 @@ async function runRound2AI(dispute) {
     Joiner needs: ${summary.summaries.joiner}
     Common Ground: ${summary.common_ground.join(", ")}
 
-    TASK: Generate 3 distinct solutions.
-    1. Option A: Prioritizes Creator's perspective slightly.
-    2. Option B: Prioritizes Joiner's perspective slightly.
-    3. Option C: A balanced compromise.
+    TASK: Generate 3 solutions (A=Creator Focus, B=Joiner Focus, C=Balanced).
+    IMPORTANT: Return "options" as a valid JSON Array.
 
     OUTPUT JSON:
     {
       "options": [
-        {
+        { 
           "id": "A", "title": "...", "description": "...", "type": "Creator Focused",
           "pros": { "creator": "...", "joiner": "..." },
           "cons": { "creator": "...", "joiner": "..." }
         },
-        // ... Option B and C
+        { 
+          "id": "B", "title": "...", "description": "...", "type": "Joiner Focused",
+          "pros": { "creator": "...", "joiner": "..." },
+          "cons": { "creator": "...", "joiner": "..." }
+        },
+        { 
+          "id": "C", "title": "...", "description": "...", "type": "Balanced Compromise",
+          "pros": { "creator": "...", "joiner": "..." },
+          "cons": { "creator": "...", "joiner": "..." }
+        }
       ]
     }
   `;
   const result = await model.generateContent(prompt);
-  return JSON.parse(result.response.text());
+  return cleanAIResponse(result.response.text());
 }
 
 async function runRound3AI(dispute) {
   const model = getGeminiModel();
-  // Get details of chosen options
   const selectedOptions = dispute.round_2_options
     .filter(o => dispute.final_selected_option_ids.includes(o.id))
     .map(o => `${o.title}: ${o.description}`)
     .join("\n");
 
   const prompt = `
-    DECISION: Users agreed on these approaches:
+    DECISION: Users agreed on:
     ${selectedOptions}
 
-    TASK: Create a comprehensive Action Plan.
-    1. Actionable Tasks (Who, What, By When).
-    2. Strategic Suggestions broken into timeframes (Short, Medium, Long term).
+    TASK: Create an Action Plan.
+    1. Tasks (Who, What, By When).
+    2. Suggestions (Short/Medium/Long term).
 
     OUTPUT JSON:
     {
@@ -352,12 +475,76 @@ async function runRound3AI(dispute) {
         { "who": "Creator", "what": "...", "by_when": "..." }
       ],
       "suggestions": {
-        "short_term": ["Immediate action 1", "Immediate action 2"],
-        "medium_term": ["Habit to build over next month"],
-        "long_term": ["Lifestyle change for next year"]
+        "short_term": ["..."],
+        "medium_term": ["..."],
+        "long_term": ["..."]
       }
     }
   `;
   const result = await model.generateContent(prompt);
-  return JSON.parse(result.response.text());
+  return cleanAIResponse(result.response.text());
 }
+
+async function runRound3AI_Correction(dispute, feedback) {
+  const model = getGeminiModel();
+  const currentPlan = JSON.stringify(dispute.round_3_plan.tasks);
+
+  const prompt = `
+    CURRENT PLAN: ${currentPlan}
+    USER REQUEST: "${feedback}"
+    
+    TASK: Modify the tasks list.
+    OUTPUT JSON:
+    {
+      "tasks": [
+        { "who": "...", "what": "...", "by_when": "..." }
+      ],
+      "suggestions": { "short_term": [], "medium_term": [], "long_term": [] }
+    }
+  `;
+  const result = await model.generateContent(prompt);
+  return cleanAIResponse(result.response.text());
+}
+
+// 7. GET DISPUTE STATUS (Polling)
+export const getDispute = async (req, res) => {
+  try {
+    const dispute = await OfficialDispute.findById(req.params.id)
+      .populate("creator_id joiner_id"); // Get names if needed
+    if (!dispute) return res.status(404).json({ message: "Dispute not found" });
+    res.json(dispute);
+  } catch (err) {
+    res.status(500).json({ message: "Error fetching dispute" });
+  }
+};
+
+// 8. SIGN FINAL PLAN (Completion)
+export const signPlan = async (req, res) => {
+  try {
+    const { dispute_id } = req.body;
+    const dispute = await OfficialDispute.findById(dispute_id);
+
+    if (req.user._id.toString() === dispute.creator_id.toString()) {
+      dispute.round_3_plan.final_signatures.creator = true;
+    } else {
+      dispute.round_3_plan.final_signatures.joiner = true;
+    }
+
+    await dispute.save();
+
+    // Check if BOTH signed
+    if (dispute.round_3_plan.final_signatures.creator && dispute.round_3_plan.final_signatures.joiner) {
+      dispute.status = "COMPLETED";
+      await dispute.save();
+      if (req.io) req.io.to(dispute_id).emit("status_update", {
+        status: "COMPLETED",
+        message: "Dispute Resolved!"
+      });
+    }
+
+    res.json({ message: "Plan signed", status: dispute.status });
+
+  } catch (err) {
+    res.status(500).json({ message: "Signing failed" });
+  }
+};
