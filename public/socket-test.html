@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Socket.IO Test Client - Official Dispute</title>
+  <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #1e1e1e;
+      color: #e0e0e0;
+      padding: 20px;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    h1 {
+      color: #4CAF50;
+      margin-bottom: 20px;
+    }
+    .section {
+      background: #2d2d2d;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+      border: 1px solid #444;
+    }
+    .section h2 {
+      color: #64B5F6;
+      margin-bottom: 15px;
+      font-size: 18px;
+    }
+    .input-group {
+      margin-bottom: 15px;
+    }
+    label {
+      display: block;
+      margin-bottom: 5px;
+      color: #aaa;
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+    input, textarea {
+      width: 100%;
+      padding: 10px;
+      background: #1e1e1e;
+      border: 1px solid #444;
+      border-radius: 4px;
+      color: #e0e0e0;
+      font-family: 'Courier New', monospace;
+      font-size: 14px;
+    }
+    textarea {
+      resize: vertical;
+      min-height: 80px;
+    }
+    button {
+      background: #4CAF50;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      margin-right: 10px;
+      margin-bottom: 10px;
+    }
+    button:hover {
+      background: #45a049;
+    }
+    button:disabled {
+      background: #555;
+      cursor: not-allowed;
+    }
+    .btn-secondary {
+      background: #2196F3;
+    }
+    .btn-secondary:hover {
+      background: #0b7dda;
+    }
+    .btn-danger {
+      background: #f44336;
+    }
+    .btn-danger:hover {
+      background: #da190b;
+    }
+    .status {
+      padding: 10px;
+      border-radius: 4px;
+      margin-bottom: 15px;
+      font-weight: bold;
+    }
+    .status.connected {
+      background: #1b5e20;
+      color: #81c784;
+    }
+    .status.disconnected {
+      background: #b71c1c;
+      color: #e57373;
+    }
+    .status.authenticated {
+      background: #01579b;
+      color: #4fc3f7;
+    }
+    #eventLog {
+      background: #1e1e1e;
+      border: 1px solid #444;
+      border-radius: 4px;
+      padding: 15px;
+      max-height: 400px;
+      overflow-y: auto;
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+    }
+    .log-entry {
+      padding: 8px;
+      margin-bottom: 8px;
+      border-left: 3px solid #666;
+      background: #2d2d2d;
+      border-radius: 2px;
+    }
+    .log-sent {
+      border-left-color: #4CAF50;
+    }
+    .log-received {
+      border-left-color: #2196F3;
+    }
+    .log-error {
+      border-left-color: #f44336;
+    }
+    .log-info {
+      border-left-color: #FFC107;
+    }
+    .timestamp {
+      color: #888;
+      font-size: 10px;
+    }
+    .event-name {
+      color: #64B5F6;
+      font-weight: bold;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+    @media (max-width: 768px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🔌 Socket.IO Test Client - Official Dispute System</h1>
+    
+    <!-- Connection Status -->
+    <div class="section">
+      <h2>Connection Status</h2>
+      <div id="connectionStatus" class="status disconnected">
+        ❌ Disconnected
+      </div>
+      <div class="input-group">
+        <label>Server URL</label>
+        <input type="text" id="serverUrl" value="http://localhost:5001" placeholder="http://localhost:5001">
+      </div>
+      <button onclick="connect()">Connect</button>
+      <button onclick="disconnect()" class="btn-danger">Disconnect</button>
+      <button onclick="testPing()" class="btn-secondary">Test Ping</button>
+    </div>
+
+    <div class="grid">
+      <!-- Authentication -->
+      <div class="section">
+        <h2>1. Authentication</h2>
+        <div class="input-group">
+          <label>JWT Token</label>
+          <textarea id="jwtToken" placeholder="Paste your JWT token here"></textarea>
+        </div>
+        <button onclick="authenticate()">Authenticate</button>
+      </div>
+
+      <!-- Join Dispute -->
+      <div class="section">
+        <h2>2. Join Dispute</h2>
+        <div class="input-group">
+          <label>Dispute ID</label>
+          <input type="text" id="disputeId" placeholder="Enter dispute ID">
+        </div>
+        <button onclick="joinDispute()">Join Dispute</button>
+        <button onclick="leaveDispute()" class="btn-danger">Leave Dispute</button>
+      </div>
+    </div>
+
+    <!-- Send Message -->
+    <div class="section">
+      <h2>3. Send Message</h2>
+      <div class="input-group">
+        <label>Message Text</label>
+        <textarea id="messageText" placeholder="Type your message here"></textarea>
+      </div>
+      <button onclick="sendMessage()">Send Message</button>
+      <button onclick="startTyping()" class="btn-secondary">Start Typing</button>
+      <button onclick="stopTyping()" class="btn-secondary">Stop Typing</button>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="section">
+      <h2>4. Quick Actions</h2>
+      <button onclick="startRecording()" class="btn-secondary">Start Recording Audio</button>
+      <button onclick="stopRecording()" class="btn-secondary">Stop Recording Audio</button>
+      <button onclick="requestMessages()" class="btn-secondary">Request Messages</button>
+      <button onclick="endConversation()" class="btn-danger">End Conversation</button>
+    </div>
+
+    <!-- Event Log -->
+    <div class="section">
+      <h2>Event Log</h2>
+      <button onclick="clearLog()" class="btn-secondary" style="float: right;">Clear Log</button>
+      <div id="eventLog"></div>
+    </div>
+  </div>
+
+  <script>
+    let socket = null;
+    let isAuthenticated = false;
+    let currentDisputeId = null;
+
+    function log(type, eventName, data) {
+      const logDiv = document.getElementById('eventLog');
+      const entry = document.createElement('div');
+      entry.className = `log-entry log-${type}`;
+      
+      const timestamp = new Date().toLocaleTimeString();
+      const icon = {
+        sent: '📤',
+        received: '📥',
+        error: '❌',
+        info: 'ℹ️'
+      }[type] || '•';
+      
+      entry.innerHTML = `
+        <span class="timestamp">[${timestamp}]</span>
+        ${icon} <span class="event-name">${eventName}</span>
+        <pre>${JSON.stringify(data, null, 2)}</pre>
+      `;
+      
+      logDiv.insertBefore(entry, logDiv.firstChild);
+    }
+
+    function updateStatus(connected, authenticated = false) {
+      const statusDiv = document.getElementById('connectionStatus');
+      if (connected) {
+        if (authenticated) {
+          statusDiv.className = 'status authenticated';
+          statusDiv.innerHTML = '✅ Connected & Authenticated';
+        } else {
+          statusDiv.className = 'status connected';
+          statusDiv.innerHTML = '🔗 Connected (Not Authenticated)';
+        }
+      } else {
+        statusDiv.className = 'status disconnected';
+        statusDiv.innerHTML = '❌ Disconnected';
+      }
+    }
+
+    function connect() {
+      const serverUrl = document.getElementById('serverUrl').value;
+      
+      if (socket) {
+        socket.disconnect();
+      }
+
+      socket = io(serverUrl, {
+        transports: ['websocket'],
+        reconnection: true
+      });
+
+      socket.on('connect', () => {
+        log('info', 'connect', { socketId: socket.id });
+        updateStatus(true, false);
+      });
+
+      socket.on('disconnect', (reason) => {
+        log('info', 'disconnect', { reason });
+        updateStatus(false);
+        isAuthenticated = false;
+      });
+
+      socket.on('authenticated', (data) => {
+        log('received', 'authenticated', data);
+        isAuthenticated = true;
+        updateStatus(true, true);
+        alert('✅ Authentication successful!');
+      });
+
+      socket.on('pong', (data) => {
+        log('received', 'pong', data);
+      });
+
+      socket.on('dispute_state', (data) => {
+        log('received', 'dispute_state', data);
+        currentDisputeId = data.dispute._id;
+        alert('✅ Joined dispute successfully!');
+      });
+
+      socket.on('user_online', (data) => {
+        log('received', 'user_online', data);
+      });
+
+      socket.on('user_offline', (data) => {
+        log('received', 'user_offline', data);
+      });
+
+      socket.on('new_message', (data) => {
+        log('received', 'new_message', data);
+      });
+
+      socket.on('user_typing', (data) => {
+        log('received', 'user_typing', data);
+      });
+
+      socket.on('user_stop_typing', (data) => {
+        log('received', 'user_stop_typing', data);
+      });
+
+      socket.on('user_recording_audio', (data) => {
+        log('received', 'user_recording_audio', data);
+      });
+
+      socket.on('user_stopped_recording', (data) => {
+        log('received', 'user_stopped_recording', data);
+      });
+
+      socket.on('message_status_update', (data) => {
+        log('received', 'message_status_update', data);
+      });
+
+      socket.on('messages_loaded', (data) => {
+        log('received', 'messages_loaded', data);
+      });
+
+      socket.on('conversation_ended', (data) => {
+        log('received', 'conversation_ended', data);
+        alert('Conversation ended!');
+      });
+
+      socket.on('summary_ready', (data) => {
+        log('received', 'summary_ready', data);
+        alert('✅ AI Summary is ready!');
+      });
+
+      socket.on('user_left', (data) => {
+        log('received', 'user_left', data);
+      });
+
+      socket.on('error', (data) => {
+        log('error', 'error', data);
+        alert('❌ Error: ' + data.message);
+      });
+    }
+
+    function disconnect() {
+      if (socket) {
+        socket.disconnect();
+        log('info', 'disconnect', { manual: true });
+      }
+    }
+
+    function authenticate() {
+      const token = document.getElementById('jwtToken').value.trim();
+      if (!token) {
+        alert('Please enter a JWT token');
+        return;
+      }
+      if (!socket || !socket.connected) {
+        alert('Please connect first');
+        return;
+      }
+      
+      const payload = { token };
+      socket.emit('authenticate', payload);
+      log('sent', 'authenticate', payload);
+    }
+
+    function testPing() {
+      if (!socket || !socket.connected) {
+        alert('Please connect first');
+        return;
+      }
+      socket.emit('ping', {});
+      log('sent', 'ping', {});
+    }
+
+    function joinDispute() {
+      const disputeId = document.getElementById('disputeId').value.trim();
+      if (!disputeId) {
+        alert('Please enter a dispute ID');
+        return;
+      }
+      if (!isAuthenticated) {
+        alert('Please authenticate first');
+        return;
+      }
+      
+      const payload = { dispute_id: disputeId };
+      socket.emit('join_dispute', payload);
+      log('sent', 'join_dispute', payload);
+    }
+
+    function leaveDispute() {
+      if (!currentDisputeId) {
+        alert('Not in a dispute');
+        return;
+      }
+      
+      const payload = { dispute_id: currentDisputeId };
+      socket.emit('leave_dispute', payload);
+      log('sent', 'leave_dispute', payload);
+      currentDisputeId = null;
+    }
+
+    function sendMessage() {
+      const text = document.getElementById('messageText').value.trim();
+      const disputeId = document.getElementById('disputeId').value.trim();
+      
+      if (!text) {
+        alert('Please enter a message');
+        return;
+      }
+      if (!disputeId) {
+        alert('Please enter a dispute ID');
+        return;
+      }
+      if (!isAuthenticated) {
+        alert('Please authenticate first');
+        return;
+      }
+      
+      const payload = { dispute_id: disputeId, text_content: text };
+      socket.emit('send_message', payload);
+      log('sent', 'send_message', payload);
+      
+      document.getElementById('messageText').value = '';
+    }
+
+    function startTyping() {
+      const disputeId = document.getElementById('disputeId').value.trim();
+      if (!disputeId) {
+        alert('Please enter a dispute ID');
+        return;
+      }
+      
+      const payload = { dispute_id: disputeId };
+      socket.emit('typing', payload);
+      log('sent', 'typing', payload);
+    }
+
+    function stopTyping() {
+      const disputeId = document.getElementById('disputeId').value.trim();
+      if (!disputeId) {
+        alert('Please enter a dispute ID');
+        return;
+      }
+      
+      const payload = { dispute_id: disputeId };
+      socket.emit('stop_typing', payload);
+      log('sent', 'stop_typing', payload);
+    }
+
+    function startRecording() {
+      const disputeId = document.getElementById('disputeId').value.trim();
+      if (!disputeId) {
+        alert('Please enter a dispute ID');
+        return;
+      }
+      
+      const payload = { dispute_id: disputeId };
+      socket.emit('audio_recording_start', payload);
+      log('sent', 'audio_recording_start', payload);
+    }
+
+    function stopRecording() {
+      const disputeId = document.getElementById('disputeId').value.trim();
+      if (!disputeId) {
+        alert('Please enter a dispute ID');
+        return;
+      }
+      
+      const payload = { dispute_id: disputeId };
+      socket.emit('audio_recording_stop', payload);
+      log('sent', 'audio_recording_stop', payload);
+    }
+
+    function requestMessages() {
+      const disputeId = document.getElementById('disputeId').value.trim();
+      if (!disputeId) {
+        alert('Please enter a dispute ID');
+        return;
+      }
+      
+      const payload = { dispute_id: disputeId, limit: 50 };
+      socket.emit('request_messages', payload);
+      log('sent', 'request_messages', payload);
+    }
+
+    function endConversation() {
+      const disputeId = document.getElementById('disputeId').value.trim();
+      if (!disputeId) {
+        alert('Please enter a dispute ID');
+        return;
+      }
+      
+      if (!confirm('Are you sure you want to end the conversation?')) {
+        return;
+      }
+      
+      const payload = { dispute_id: disputeId };
+      socket.emit('end_conversation', payload);
+      log('sent', 'end_conversation', payload);
+    }
+
+    function clearLog() {
+      document.getElementById('eventLog').innerHTML = '';
+    }
+
+    // Auto-connect on page load
+    window.onload = () => {
+      log('info', 'Page Loaded', { ready: true });
+    };
+  </script>
+</body>
+</html>
