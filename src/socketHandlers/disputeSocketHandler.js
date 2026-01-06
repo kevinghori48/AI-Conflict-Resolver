@@ -4,9 +4,9 @@ import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 
 export const setupDisputeSocket = (io) => {
-  console.log("Setting up dispute socket handlers...");
+  console.log("Setting up FULL WebSocket dispute handlers...");
 
-  // OPTIONAL AUTHENTICATION MIDDLEWARE (for clients that support handshake auth)
+  // AUTHENTICATION MIDDLEWARE
   io.use(async (socket, next) => {
     try {
       const token = socket.handshake.auth.token || socket.handshake.query.token;
@@ -16,73 +16,30 @@ export const setupDisputeSocket = (io) => {
         socket.user = await User.findById(decoded._id).select('firstName lastName email');
         if (socket.user) {
           socket.authenticated = true;
-          console.log(`Socket pre-authenticated: ${socket.user.email}`);
+          console.log(`Socket authenticated: ${socket.user.email}`);
           return next();
         }
       }
-      // Allow connection without auth, but require auth before other events
       socket.authenticated = false;
-      console.log("Socket connected without auth (will require authenticate event)");
+      console.log("Socket connected without auth");
       next();
     } catch (err) {
-      // Allow connection but not authenticated
       socket.authenticated = false;
-      console.log("Socket auth failed, allowing unauthenticated connection");
+      console.log("Socket auth failed");
       next();
     }
   });
 
   // CONNECTION EVENT
   io.on("connection", (socket) => {
-    console.log(`\n🔌 NEW CONNECTION: ${socket.id} (Auth: ${socket.authenticated})\n`);
+    console.log(`\nNEW CONNECTION: ${socket.id} (Auth: ${socket.authenticated})\n`);
 
-    // AUTHENTICATE EVENT (For Postman/Testing)
-    socket.on("authenticate", async ({ token }) => {
-      try {
-        if (!token) {
-          socket.emit("error", { message: "No token provided" });
-          return;
-        }
-
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        socket.userId = decoded._id;
-        socket.user = await User.findById(decoded._id).select('firstName lastName email');
-
-        if (!socket.user) {
-          socket.emit("error", { message: "User not found" });
-          return;
-        }
-
-        socket.authenticated = true;
-        socket.emit("authenticated", {
-          success: true,
-          user: {
-            id: socket.user._id,
-            email: socket.user.email,
-            name: `${socket.user.firstName} ${socket.user.lastName}`
-          },
-          message: "Authentication successful"
-        });
-
-        console.log(`Socket authenticated: ${socket.user.email} (${socket.id})`);
-
-      } catch (error) {
-        socket.emit("error", {
-          message: "Authentication failed",
-          error: error.message
-        });
-        console.error("Auth error:", error.message);
-      }
-    });
-
-    // ============================================
-    // MIDDLEWARE: Check authentication before other events
-    // ============================================
+    // Helper function to require authentication
     const requireAuth = (eventName, handler) => {
       socket.on(eventName, async (...args) => {
         if (!socket.authenticated) {
           socket.emit("error", {
-            message: "Not authenticated. Please send 'authenticate' event first with your token.",
+            message: "Not authenticated",
             event: eventName
           });
           return;
@@ -99,17 +56,9 @@ export const setupDisputeSocket = (io) => {
       });
     };
 
-    // PING/PONG (Connection Test)
-    socket.on("ping", () => {
-      socket.emit("pong", {
-        message: "Connection is alive",
-        timestamp: new Date(),
-        authenticated: socket.authenticated,
-        user: socket.user ? socket.user.email : null
-      });
-    });
-
+    // ============================================
     // JOIN DISPUTE ROOM
+    // ============================================
     requireAuth("join_dispute", async ({ dispute_id }) => {
       console.log(`Join request: ${dispute_id} from ${socket.user.email}`);
       const dispute = await OfficialDispute.findById(dispute_id)
@@ -153,58 +102,193 @@ export const setupDisputeSocket = (io) => {
       });
     });
 
-    // SEND TEXT MESSAGE (REAL-TIME)
-    requireAuth("send_message", async ({ dispute_id, text_content }) => {
-      console.log(`Message from ${socket.user.email}: "${text_content.substring(0, 30)}..."`);
+    // SEND TEXT MESSAGE - 100% WEBSOCKET
+    requireAuth("send_message", async ({ dispute_id, text_content }, callback) => {
+      console.log(`Message from ${socket.user.email}: "${text_content?.substring(0, 30)}..."`);
 
-      if (!text_content?.trim()) {
-        socket.emit("error", { message: "Message cannot be empty" });
-        return;
+      try {
+        // Validate
+        if (!text_content?.trim()) {
+          const error = { success: false, message: "Message cannot be empty" };
+          if (callback) callback(error);
+          socket.emit("message_error", error);
+          return;
+        }
+
+        // Check dispute
+        const dispute = await OfficialDispute.findById(dispute_id);
+        if (!dispute) {
+          const error = { success: false, message: "Dispute not found" };
+          if (callback) callback(error);
+          socket.emit("message_error", error);
+          return;
+        }
+
+        if (dispute.status !== "CONVERSATION") {
+          const error = { success: false, message: "Not in conversation phase" };
+          if (callback) callback(error);
+          socket.emit("message_error", error);
+          return;
+        }
+
+        // Check authorization
+        const isCreator = dispute.creator_id.toString() === socket.userId;
+        const isJoiner = dispute.joiner_id?.toString() === socket.userId;
+
+        if (!isCreator && !isJoiner) {
+          const error = { success: false, message: "Not a participant" };
+          if (callback) callback(error);
+          socket.emit("message_error", error);
+          return;
+        }
+
+        const senderRole = isCreator ? "creator" : "joiner";
+
+        // Save to database
+        const message = await DisputeMessage.create({
+          dispute_id,
+          sender_id: socket.userId,
+          sender_role: senderRole,
+          message_type: "text",
+          text_content: text_content.trim(),
+          status: "sent"
+        });
+
+        // Update dispute
+        dispute.conversation.messages.push(message._id);
+        await dispute.save();
+
+        // Populate sender info
+        await message.populate('sender_id', 'firstName lastName email');
+
+        console.log(`Message saved: ${message._id}`);
+
+        // Send acknowledgment to sender (callback)
+        if (callback) {
+          callback({
+            success: true,
+            message: message,
+            timestamp: new Date()
+          });
+        }
+
+        // Broadcast to ENTIRE room (including sender for consistency)
+        io.to(dispute_id).emit("new_message", {
+          message,
+          sender_role: senderRole,
+          timestamp: new Date()
+        });
+
+        console.log(`Message broadcast to room ${dispute_id}`);
+
+      } catch (error) {
+        console.error("Send message error:", error);
+        const errorResponse = { 
+          success: false, 
+          message: "Failed to send message",
+          error: error.message 
+        };
+        if (callback) callback(errorResponse);
+        socket.emit("message_error", errorResponse);
       }
+    });
 
-      const dispute = await OfficialDispute.findById(dispute_id);
-      if (!dispute) {
-        socket.emit("error", { message: "Dispute not found" });
-        return;
+    // SEND AUDIO MESSAGE - 100% WEBSOCKET
+    requireAuth("send_audio", async ({ dispute_id, audio_data, duration }, callback) => {
+      console.log(`Audio from ${socket.user.email}: ${duration}s`);
+
+      try {
+        if (!audio_data) {
+          const error = { success: false, message: "No audio data provided" };
+          if (callback) callback(error);
+          return;
+        }
+
+        const dispute = await OfficialDispute.findById(dispute_id);
+        if (!dispute) {
+          const error = { success: false, message: "Dispute not found" };
+          if (callback) callback(error);
+          return;
+        }
+
+        if (dispute.status !== "CONVERSATION") {
+          const error = { success: false, message: "Not in conversation phase" };
+          if (callback) callback(error);
+          return;
+        }
+
+        const isCreator = dispute.creator_id.toString() === socket.userId;
+        const isJoiner = dispute.joiner_id?.toString() === socket.userId;
+
+        if (!isCreator && !isJoiner) {
+          const error = { success: false, message: "Not a participant" };
+          if (callback) callback(error);
+          return;
+        }
+
+        const senderRole = isCreator ? "creator" : "joiner";
+        const currentCount = dispute.conversation.audio_count[senderRole] || 0;
+
+        if (currentCount >= 5) {
+          const error = { 
+            success: false, 
+            message: `Maximum 5 audio messages allowed. You've reached the limit.` 
+          };
+          if (callback) callback(error);
+          return;
+        }
+
+        // Save audio (for full WebSocket, you'd save base64 or use a file service)
+        const message = await DisputeMessage.create({
+          dispute_id,
+          sender_id: socket.userId,
+          sender_role: senderRole,
+          message_type: "audio",
+          audio_data: {
+            data: audio_data, // Base64 or buffer
+            duration: duration || 30,
+            mimetype: "audio/webm"
+          },
+          status: "sent"
+        });
+
+        dispute.conversation.messages.push(message._id);
+        dispute.conversation.audio_count[senderRole] = currentCount + 1;
+        await dispute.save();
+
+        await message.populate('sender_id', 'firstName lastName email');
+
+        // Acknowledge to sender
+        if (callback) {
+          callback({
+            success: true,
+            message: message,
+            remaining_audios: 5 - dispute.conversation.audio_count[senderRole],
+            timestamp: new Date()
+          });
+        }
+
+        // Broadcast to room
+        io.to(dispute_id).emit("new_message", {
+          message,
+          sender_role: senderRole,
+          audio_count: dispute.conversation.audio_count,
+          remaining: 5 - dispute.conversation.audio_count[senderRole],
+          timestamp: new Date()
+        });
+
+        console.log(`Audio message broadcast to room ${dispute_id}`);
+
+      } catch (error) {
+        console.error("Send audio error:", error);
+        if (callback) {
+          callback({ 
+            success: false, 
+            message: "Failed to send audio",
+            error: error.message 
+          });
+        }
       }
-
-      if (dispute.status !== "CONVERSATION") {
-        socket.emit("error", { message: "Not in conversation phase" });
-        return;
-      }
-
-      const isCreator = dispute.creator_id.toString() === socket.userId;
-      const isJoiner = dispute.joiner_id?.toString() === socket.userId;
-
-      if (!isCreator && !isJoiner) {
-        socket.emit("error", { message: "Not a participant" });
-        return;
-      }
-
-      const senderRole = isCreator ? "creator" : "joiner";
-
-      const message = await DisputeMessage.create({
-        dispute_id,
-        sender_id: socket.userId,
-        sender_role: senderRole,
-        message_type: "text",
-        text_content: text_content.trim(),
-        status: "sent"
-      });
-
-      dispute.conversation.messages.push(message._id);
-      await dispute.save();
-
-      await message.populate('sender_id', 'firstName lastName email');
-
-      // Broadcast to entire room (including sender)
-      io.to(dispute_id).emit("new_message", {
-        message,
-        sender_role: senderRole,
-        timestamp: new Date()
-      });
-
-      console.log(`Message saved & broadcast: ${message._id}`);
     });
 
     // TYPING INDICATORS
@@ -225,7 +309,7 @@ export const setupDisputeSocket = (io) => {
       });
     });
 
-    // MESSAGE STATUS UPDATES
+    // MESSAGE STATUS UPDATES (WhatsApp-like)
     requireAuth("message_delivered", async ({ message_id, dispute_id }) => {
       await DisputeMessage.findByIdAndUpdate(message_id, {
         status: "delivered",
@@ -270,60 +354,56 @@ export const setupDisputeSocket = (io) => {
       });
     });
 
-    // REQUEST MESSAGE HISTORY
-    requireAuth("request_messages", async ({ dispute_id, limit = 50, before }) => {
-      const query = { dispute_id };
-      if (before) {
-        query.timestamp = { $lt: new Date(before) };
-      }
-
-      const messages = await DisputeMessage.find(query)
-        .populate('sender_id', 'firstName lastName email')
-        .sort({ timestamp: -1 })
-        .limit(limit);
-
-      socket.emit("messages_loaded", {
-        messages: messages.reverse(),
-        count: messages.length,
-        has_more: messages.length === limit,
-        timestamp: new Date()
-      });
-
-      console.log(`Sent ${messages.length} messages to ${socket.user.email}`);
-    });
-
     // END CONVERSATION
-    requireAuth("end_conversation", async ({ dispute_id }) => {
-      const dispute = await OfficialDispute.findById(dispute_id);
-      if (!dispute) {
-        socket.emit("error", { message: "Dispute not found" });
-        return;
+    requireAuth("end_conversation", async ({ dispute_id }, callback) => {
+      try {
+        const dispute = await OfficialDispute.findById(dispute_id);
+        if (!dispute) {
+          if (callback) callback({ success: false, message: "Dispute not found" });
+          return;
+        }
+
+        if (dispute.status !== "CONVERSATION") {
+          if (callback) callback({ success: false, message: "Conversation already ended" });
+          return;
+        }
+
+        dispute.conversation.ended_by = socket.userId;
+        dispute.conversation.ended_at = new Date();
+        dispute.status = "AI_SUMMARIZING";
+        await dispute.save();
+
+        if (callback) {
+          callback({ 
+            success: true, 
+            message: "Conversation ended",
+            status: "AI_SUMMARIZING" 
+          });
+        }
+
+        io.to(dispute_id).emit("conversation_ended", {
+          ended_by: socket.userId,
+          ended_by_role: socket.userRole,
+          status: "AI_SUMMARIZING",
+          message: "Conversation ended. AI is generating summary...",
+          timestamp: new Date()
+        });
+
+        console.log(`Conversation ended by ${socket.userRole}`);
+
+      } catch (error) {
+        console.error("End conversation error:", error);
+        if (callback) {
+          callback({ 
+            success: false, 
+            message: "Failed to end conversation",
+            error: error.message 
+          });
+        }
       }
-
-      if (dispute.status !== "CONVERSATION") {
-        socket.emit("error", { message: "Conversation already ended" });
-        return;
-      }
-
-      dispute.conversation.ended_by = socket.userId;
-      dispute.conversation.ended_at = new Date();
-      dispute.status = "AI_SUMMARIZING";
-      await dispute.save();
-
-      io.to(dispute_id).emit("conversation_ended", {
-        ended_by: socket.userId,
-        ended_by_role: socket.userRole,
-        status: "AI_SUMMARIZING",
-        message: "Conversation ended. AI is generating summary...",
-        timestamp: new Date()
-      });
-
-      console.log(`Conversation ended by ${socket.userRole}`);
     });
 
-    // ============================================
     // LEAVE DISPUTE
-    // ============================================
     requireAuth("leave_dispute", ({ dispute_id }) => {
       socket.leave(dispute_id);
       socket.to(dispute_id).emit("user_left", {
@@ -334,12 +414,10 @@ export const setupDisputeSocket = (io) => {
       });
       socket.currentDispute = null;
       socket.userRole = null;
-      console.log(`${socket.user.email} left dispute`);
+      console.log(`👋 ${socket.user.email} left dispute`);
     });
 
-    // ============================================
     // DISCONNECT
-    // ============================================
     socket.on("disconnect", (reason) => {
       console.log(`\nDISCONNECT: ${socket.id} - Reason: ${reason}\n`);
       if (socket.currentDispute && socket.authenticated) {
@@ -357,10 +435,4 @@ export const setupDisputeSocket = (io) => {
       console.error(`Socket error: ${socket.id}`, error);
     });
   });
-
-  io.on("connect_error", (error) => {
-    console.error("Connection error:", error);
-  });
-
-  console.log("Dispute socket handlers ready\n");
 };
