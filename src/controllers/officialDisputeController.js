@@ -216,33 +216,94 @@ export const joinDispute = async (req, res) => {
   }
 };
 
-// DEPRECATED: SEND TEXT MESSAGE VIA HTTP
-// NOTE: This endpoint is DEPRECATED. Use WebSocket 'send_message' event instead.
-// Keeping it for backward compatibility or testing purposes only.
-export const sendTextMessage = async (req, res) => {
-  console.warn("⚠️ WARNING: HTTP message sending is deprecated. Use WebSocket 'send_message' event.");
-  res.status(410).json({
-    success: false,
-    message: "This endpoint is deprecated. Please use WebSocket 'send_message' event for real-time messaging.",
-    websocket_event: "send_message",
-    documentation: "Connect via Socket.IO and emit 'send_message' event with { dispute_id, text_content }"
-  });
-};
-
-// DEPRECATED: SEND AUDIO MESSAGE VIA HTTP
-// NOTE: This endpoint is DEPRECATED. Use WebSocket 'send_audio' event instead.
 export const sendAudioMessage = async (req, res) => {
-  console.warn("WARNING: HTTP audio sending is deprecated. Use WebSocket 'send_audio' event.");
-  // Clean up uploaded file if any
-  if (req.file && req.file.path) {
-    fs.unlinkSync(req.file.path);
+  try {
+    const { dispute_id, duration } = req.body;
+    const file = req.file;
+
+    if (!file) {
+      return res.status(400).json({ message: "No audio file provided" });
+    }
+
+    const dispute = await OfficialDispute.findById(dispute_id);
+    if (!dispute) {
+      fs.unlinkSync(file.path);
+      return res.status(404).json({ message: "Dispute not found" });
+    }
+
+    if (dispute.status !== "CONVERSATION") {
+      fs.unlinkSync(file.path);
+      return res.status(400).json({
+        message: "Dispute is not in conversation phase"
+      });
+    }
+
+    const isCreator = dispute.creator_id.toString() === req.user._id.toString();
+    const isJoiner = dispute.joiner_id?.toString() === req.user._id.toString();
+
+    if (!isCreator && !isJoiner) {
+      fs.unlinkSync(file.path);
+      return res.status(403).json({
+        message: "You are not a participant of this dispute"
+      });
+    }
+
+    const senderRole = isCreator ? "creator" : "joiner";
+    const currentCount = dispute.conversation.audio_count[senderRole] || 0;
+    if (currentCount >= 5) {
+      fs.unlinkSync(file.path);
+      return res.status(400).json({
+        message: `Maximum 5 audio messages allowed per person. You've reached the limit.`
+      });
+    }
+
+    const message = await DisputeMessage.create({
+      dispute_id,
+      sender_id: req.user._id,
+      sender_role: senderRole,
+      message_type: "audio",
+      audio_data: {
+        file_path: file.path,
+        original_name: file.originalname,
+        mimetype: file.mimetype,
+        size: file.size,
+        duration: duration ? parseFloat(duration) : 30
+      },
+      status: "sent"
+    });
+
+    dispute.conversation.messages.push(message._id);
+    dispute.conversation.audio_count[senderRole] = currentCount + 1;
+    await dispute.save();
+
+    await message.populate('sender_id', 'firstName lastName email');
+
+    // EMIT SOCKET EVENT
+    if (req.io) {
+      req.io.to(dispute_id).emit("new_message", {
+        message,
+        sender_role: senderRole,
+        audio_count: dispute.conversation.audio_count,
+        remaining: 5 - dispute.conversation.audio_count[senderRole],
+        timestamp: new Date()
+      });
+      console.log(`Audio message broadcast to room ${dispute_id}`);
+    }
+
+    res.json({
+      success: true,
+      message,
+      remaining_audios: 5 - dispute.conversation.audio_count[senderRole],
+      audio_count: dispute.conversation.audio_count
+    });
+
+  } catch (err) {
+    console.error("Send audio error:", err);
+    if (req.file && req.file.path) {
+      fs.unlinkSync(req.file.path);
+    }
+    res.status(500).json({ message: "Failed to send audio", error: err.message });
   }
-  res.status(410).json({
-    success: false,
-    message: "This endpoint is deprecated. Please use WebSocket 'send_audio' event for real-time audio messaging.",
-    websocket_event: "send_audio",
-    documentation: "Connect via Socket.IO and emit 'send_audio' event with { dispute_id, audio_data, duration }"
-  });
 };
 
 // ENDPOINT 4: GET AUDIO FILE (KEEP - For playback)
