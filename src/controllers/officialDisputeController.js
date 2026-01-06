@@ -26,10 +26,8 @@ const cleanAIResponse = (text) => {
   }
 };
 
-// Generate unique invite code
 const generateCode = () => crypto.randomBytes(3).toString("hex").toUpperCase();
 
-// Relationship-based questions
 const RELATIONSHIP_QUESTIONS = {
   couple: [
     "How long have you been together?",
@@ -85,7 +83,7 @@ export const getRelationshipQuestions = async (req, res) => {
   }
 };
 
-// ENDPOINT 2: CREATE DISPUTE (Screen 1 & 2)
+// ENDPOINT 2: CREATE DISPUTE
 export const createDispute = async (req, res) => {
   try {
     const {
@@ -100,14 +98,12 @@ export const createDispute = async (req, res) => {
       relationship_questions
     } = req.body;
 
-    // Validation
     if (!dispute_name || !relationship_type || !relationship_importance || !goal || !urgency) {
       return res.status(400).json({
         message: "Missing required fields: dispute_name, relationship_type, relationship_importance, goal, urgency" 
       });
     }
 
-    // Parse relationship questions if sent as string
     let parsedQuestions = [];
     if (relationship_questions) {
       try {
@@ -119,7 +115,6 @@ export const createDispute = async (req, res) => {
       }
     }
 
-    // Generate unique invite code
     let code = generateCode();
     let exists = await OfficialDispute.findOne({ invite_code: code });
     while (exists) {
@@ -127,7 +122,6 @@ export const createDispute = async (req, res) => {
       exists = await OfficialDispute.findOne({ invite_code: code });
     }
 
-    // Create dispute
     const dispute = await OfficialDispute.create({
       dispute_name,
       creator_id: req.user._id,
@@ -154,12 +148,12 @@ export const createDispute = async (req, res) => {
     });
 
   } catch (err) {
-    console.error("  Create dispute error:", err);
+    console.error("❌ Create dispute error:", err);
     res.status(500).json({ message: "Failed to create dispute", error: err.message });
   }
 };
 
-// UPDATED: ENDPOINT 3 - JOIN DISPUTE (Screen 4)
+// ENDPOINT 3: JOIN DISPUTE
 export const joinDispute = async (req, res) => {
   try {
     const { invite_code } = req.body;
@@ -197,7 +191,7 @@ export const joinDispute = async (req, res) => {
 
     await dispute.populate('joiner_id', 'firstName lastName email');
 
-    // EMIT SOCKET EVENT TO CREATOR
+    // Emit socket event to creator
     if (req.io) {
       req.io.to(dispute._id.toString()).emit("joiner_connected", {
         joiner_id: req.user._id,
@@ -222,72 +216,6 @@ export const joinDispute = async (req, res) => {
   }
 };
 
-// UPDATED: ENDPOINT 4 - SEND TEXT MESSAGE (Screen 5)
-export const sendTextMessage = async (req, res) => {
-  try {
-    const { dispute_id, text_content } = req.body;
-
-    if (!text_content || text_content.trim() === "") {
-      return res.status(400).json({ message: "Message cannot be empty" });
-    }
-
-    const dispute = await OfficialDispute.findById(dispute_id);
-    if (!dispute) {
-      return res.status(404).json({ message: "Dispute not found" });
-    }
-
-    if (dispute.status !== "CONVERSATION") {
-      return res.status(400).json({
-        message: "Dispute is not in conversation phase"
-      });
-    }
-
-    const isCreator = dispute.creator_id.toString() === req.user._id.toString();
-    const isJoiner = dispute.joiner_id?.toString() === req.user._id.toString();
-
-    if (!isCreator && !isJoiner) {
-      return res.status(403).json({
-        message: "You are not a participant of this dispute"
-      });
-    }
-
-    const senderRole = isCreator ? "creator" : "joiner";
-
-    const message = await DisputeMessage.create({
-      dispute_id,
-      sender_id: req.user._id,
-      sender_role: senderRole,
-      message_type: "text",
-      text_content: text_content.trim(),
-      status: "sent"
-    });
-
-    dispute.conversation.messages.push(message._id);
-    await dispute.save();
-
-    await message.populate('sender_id', 'firstName lastName email');
-
-    if (req.io) {
-      req.io.to(dispute_id).emit("new_message", {
-        message,
-        sender_role: senderRole,
-        timestamp: new Date()
-      });
-      console.log(`HTTP message broadcast to room ${dispute_id}`);
-    }
-
-    res.json({
-      success: true,
-      message
-    });
-
-  } catch (err) {
-    console.error("Send text error:", err);
-    res.status(500).json({ message: "Failed to send message", error: err.message });
-  }
-};
-
-// UPDATED: ENDPOINT 5 - SEND AUDIO MESSAGE (Screen 5)
 export const sendAudioMessage = async (req, res) => {
   try {
     const { dispute_id, duration } = req.body;
@@ -378,7 +306,7 @@ export const sendAudioMessage = async (req, res) => {
   }
 };
 
-// ENDPOINT 6: GET AUDIO FILE
+// ENDPOINT 4: GET AUDIO FILE (KEEP - For playback)
 export const getAudioFile = async (req, res) => {
   try {
     const { message_id } = req.params;
@@ -388,7 +316,6 @@ export const getAudioFile = async (req, res) => {
       return res.status(404).json({ message: "Audio message not found" });
     }
 
-    // Verify user is participant
     const dispute = await OfficialDispute.findById(message.dispute_id);
     const isParticipant =
       dispute.creator_id.toString() === req.user._id.toString() ||
@@ -400,27 +327,37 @@ export const getAudioFile = async (req, res) => {
       });
     }
 
-    const filePath = message.audio_data.file_path;
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ message: "Audio file not found on server" });
+    // If audio is stored as base64/buffer in DB
+    if (message.audio_data.data) {
+      const buffer = Buffer.from(message.audio_data.data, 'base64');
+      res.setHeader('Content-Type', message.audio_data.mimetype || 'audio/webm');
+      res.setHeader('Content-Length', buffer.length);
+      return res.send(buffer);
     }
 
-    res.setHeader('Content-Type', message.audio_data.mimetype);
-    res.setHeader('Content-Length', message.audio_data.size);
-    res.setHeader('Content-Disposition', `inline; filename="${message.audio_data.original_name}"`);
-    const fileStream = fs.createReadStream(filePath);
-    fileStream.pipe(res);
+    // If audio is stored as file path
+    const filePath = message.audio_data.file_path;
+    if (filePath && fs.existsSync(filePath)) {
+      res.setHeader('Content-Type', message.audio_data.mimetype);
+      res.setHeader('Content-Length', message.audio_data.size);
+      res.setHeader('Content-Disposition', `inline; filename="${message.audio_data.original_name}"`);
+      const fileStream = fs.createReadStream(filePath);
+      return fileStream.pipe(res);
+    }
+
+    res.status(404).json({ message: "Audio file not found on server" });
 
   } catch (err) {
-    console.error("  Get audio error:", err);
+    console.error("❌ Get audio error:", err);
     res.status(500).json({ message: "Failed to get audio file" });
   }
 };
 
-// ENDPOINT 7: GET CONVERSATION MESSAGES
+// ENDPOINT 5: GET CONVERSATION MESSAGES (KEEP - For history)
 export const getConversationMessages = async (req, res) => {
   try {
     const { dispute_id } = req.params;
+    const { limit = 50, before } = req.query;
 
     const dispute = await OfficialDispute.findById(dispute_id);
     if (!dispute) {
@@ -437,24 +374,32 @@ export const getConversationMessages = async (req, res) => {
       });
     }
 
-    const messages = await DisputeMessage.find({ dispute_id })
+    // Build query with pagination
+    const query = { dispute_id };
+    if (before) {
+      query.timestamp = { $lt: new Date(before) };
+    }
+
+    const messages = await DisputeMessage.find(query)
       .populate('sender_id', 'firstName lastName email')
-      .sort({ timestamp: 1 });
+      .sort({ timestamp: -1 })
+      .limit(parseInt(limit));
 
     res.json({
       success: true,
       count: messages.length,
       audio_count: dispute.conversation.audio_count,
-      messages
+      messages: messages.reverse(), // Return in chronological order
+      has_more: messages.length === parseInt(limit)
     });
 
   } catch (err) {
-    console.error("  Fetch messages error:", err);
+    console.error("❌ Fetch messages error:", err);
     res.status(500).json({ message: "Failed to fetch messages", error: err.message });
   }
 };
 
-// ENDPOINT 8: END CONVERSATION (Stop Button)
+// ENDPOINT 6: END CONVERSATION (KEEP - Can use HTTP or WebSocket)
 export const endConversation = async (req, res) => {
   try {
     const { dispute_id } = req.body;
@@ -485,7 +430,7 @@ export const endConversation = async (req, res) => {
     dispute.status = "AI_SUMMARIZING";
     await dispute.save();
 
-    //  EMIT SOCKET EVENT
+    // Emit socket event
     if (req.io) {
       req.io.to(dispute_id).emit("conversation_ended", {
         ended_by: req.user._id,
@@ -496,7 +441,7 @@ export const endConversation = async (req, res) => {
       console.log(`Conversation ended event sent to room ${dispute_id}`);
     }
 
-    // Trigger AI summary generation asynchronously
+    // Trigger AI summary generation
     setTimeout(async () => {
       try {
         await generateAISummary(dispute, req.io);
@@ -518,15 +463,15 @@ export const endConversation = async (req, res) => {
     });
 
   } catch (err) {
-    console.error("End conversation error:", err);
+    console.error("❌ End conversation error:", err);
     res.status(500).json({ message: "Failed to end conversation", error: err.message });
   }
 };
 
-// HELPER: GENERATE AI SUMMARY (Screen 6)
+// HELPER: GENERATE AI SUMMARY
 async function generateAISummary(dispute, io) {
   try {
-    console.log("Generating AI summary for dispute:", dispute._id);
+    console.log("🤖 Generating AI summary for dispute:", dispute._id);
 
     const messages = await DisputeMessage.find({ 
       dispute_id: dispute._id 
@@ -565,22 +510,14 @@ TASK: Create a comprehensive, balanced summary of this conversation.
 
 OUTPUT JSON:
 {
-  "summary_text": "A detailed 2-3 paragraph overview of the entire conversation, highlighting key themes, concerns, and the emotional tone of both parties",
+  "summary_text": "A detailed 2-3 paragraph overview",
   "key_points": [
     {
-      "point": "Specific key issue, statement, or agreement discussed",
+      "point": "Specific key issue",
       "mentioned_by": "creator" | "joiner" | "both"
     }
   ]
-}
-
-Requirements:
-- summary_text: Must be neutral, balanced, and comprehensive (2-3 paragraphs minimum)
-- key_points: Identify 5-8 most important points from the conversation
-- Focus on understanding both perspectives equally
-- Highlight areas of agreement AND disagreement
-- Note emotional undertones if evident
-- Be specific and reference actual points discussed`;
+}`;
 
     const response = await callGemini(prompt);
     const summary = cleanAIResponse(response);
@@ -607,10 +544,10 @@ Requirements:
       });
     }
 
-    console.log("  Summary generated successfully for dispute:", dispute._id);
+    console.log("✅ Summary generated for dispute:", dispute._id);
 
   } catch (error) {
-    console.error("  Summary generation failed:", error);
+    console.error("❌ Summary generation failed:", error);
     dispute.status = "CONVERSATION";
     await dispute.save();
     throw error;

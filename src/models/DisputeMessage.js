@@ -24,7 +24,6 @@ const disputeMessageSchema = new mongoose.Schema({
   },
   // For text messages
   text_content: String,
-  
   // For audio messages
   audio_data: {
     file_path: String,
@@ -47,7 +46,6 @@ const disputeMessageSchema = new mongoose.Schema({
     type: Date,
     default: Date.now
   },
-  
   // For AI to track important messages
   is_flagged: {
     type: Boolean,
