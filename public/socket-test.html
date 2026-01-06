@@ -1,541 +1,766 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Socket.IO Test Client - Official Dispute</title>
-  <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
-  <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
-    body {
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      background: #1e1e1e;
-      color: #e0e0e0;
-      padding: 20px;
-    }
-    .container {
-      max-width: 1200px;
-      margin: 0 auto;
-    }
-    h1 {
-      color: #4CAF50;
-      margin-bottom: 20px;
-    }
-    .section {
-      background: #2d2d2d;
-      border-radius: 8px;
-      padding: 20px;
-      margin-bottom: 20px;
-      border: 1px solid #444;
-    }
-    .section h2 {
-      color: #64B5F6;
-      margin-bottom: 15px;
-      font-size: 18px;
-    }
-    .input-group {
-      margin-bottom: 15px;
-    }
-    label {
-      display: block;
-      margin-bottom: 5px;
-      color: #aaa;
-      font-size: 12px;
-      text-transform: uppercase;
-    }
-    input, textarea {
-      width: 100%;
-      padding: 10px;
-      background: #1e1e1e;
-      border: 1px solid #444;
-      border-radius: 4px;
-      color: #e0e0e0;
-      font-family: 'Courier New', monospace;
-      font-size: 14px;
-    }
-    textarea {
-      resize: vertical;
-      min-height: 80px;
-    }
-    button {
-      background: #4CAF50;
-      color: white;
-      border: none;
-      padding: 10px 20px;
-      border-radius: 4px;
-      cursor: pointer;
-      font-size: 14px;
-      margin-right: 10px;
-      margin-bottom: 10px;
-    }
-    button:hover {
-      background: #45a049;
-    }
-    button:disabled {
-      background: #555;
-      cursor: not-allowed;
-    }
-    .btn-secondary {
-      background: #2196F3;
-    }
-    .btn-secondary:hover {
-      background: #0b7dda;
-    }
-    .btn-danger {
-      background: #f44336;
-    }
-    .btn-danger:hover {
-      background: #da190b;
-    }
-    .status {
-      padding: 10px;
-      border-radius: 4px;
-      margin-bottom: 15px;
-      font-weight: bold;
-    }
-    .status.connected {
-      background: #1b5e20;
-      color: #81c784;
-    }
-    .status.disconnected {
-      background: #b71c1c;
-      color: #e57373;
-    }
-    .status.authenticated {
-      background: #01579b;
-      color: #4fc3f7;
-    }
-    #eventLog {
-      background: #1e1e1e;
-      border: 1px solid #444;
-      border-radius: 4px;
-      padding: 15px;
-      max-height: 400px;
-      overflow-y: auto;
-      font-family: 'Courier New', monospace;
-      font-size: 12px;
-    }
-    .log-entry {
-      padding: 8px;
-      margin-bottom: 8px;
-      border-left: 3px solid #666;
-      background: #2d2d2d;
-      border-radius: 2px;
-    }
-    .log-sent {
-      border-left-color: #4CAF50;
-    }
-    .log-received {
-      border-left-color: #2196F3;
-    }
-    .log-error {
-      border-left-color: #f44336;
-    }
-    .log-info {
-      border-left-color: #FFC107;
-    }
-    .timestamp {
-      color: #888;
-      font-size: 10px;
-    }
-    .event-name {
-      color: #64B5F6;
-      font-weight: bold;
-    }
-    .grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 20px;
-    }
-    @media (max-width: 768px) {
-      .grid {
-        grid-template-columns: 1fr;
-      }
-    }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp-Style Dispute Chat Tester</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0a0e27;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .chat-container {
+            width: 100%;
+            max-width: 500px;
+            height: 90vh;
+            background: #1a1f3a;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .chat-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .header-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header-top h2 {
+            font-size: 20px;
+        }
+
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            background: rgba(255,255,255,0.2);
+            padding: 6px 12px;
+            border-radius: 20px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #ef4444;
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot.connected {
+            background: #10b981;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .setup-form {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .setup-form input {
+            padding: 8px 12px;
+            border: none;
+            border-radius: 8px;
+            background: rgba(255,255,255,0.9);
+            font-size: 12px;
+        }
+
+        .setup-form button {
+            padding: 10px;
+            border: none;
+            border-radius: 8px;
+            background: white;
+            color: #667eea;
+            font-weight: bold;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .setup-form button:hover {
+            transform: scale(1.02);
+        }
+
+        .chat-messages {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            background: #0f1320;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .message {
+            display: flex;
+            flex-direction: column;
+            max-width: 70%;
+            animation: messageSlide 0.3s ease-out;
+        }
+
+        @keyframes messageSlide {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message.sent {
+            align-self: flex-end;
+            align-items: flex-end;
+        }
+
+        .message.received {
+            align-self: flex-start;
+            align-items: flex-start;
+        }
+
+        .message-bubble {
+            padding: 12px 16px;
+            border-radius: 18px;
+            word-wrap: break-word;
+            position: relative;
+        }
+
+        .message.sent .message-bubble {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+
+        .message.received .message-bubble {
+            background: #2d3548;
+            color: #e2e8f0;
+            border-bottom-left-radius: 4px;
+        }
+
+        .message-meta {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 11px;
+            color: #94a3b8;
+            margin-top: 4px;
+            padding: 0 4px;
+        }
+
+        .message-time {
+            font-size: 10px;
+        }
+
+        .message-status {
+            display: flex;
+            align-items: center;
+            gap: 2px;
+        }
+
+        .status-icon {
+            font-size: 14px;
+        }
+
+        .status-sent { color: #94a3b8; }
+        .status-delivered { color: #3b82f6; }
+        .status-read { color: #10b981; }
+
+        .typing-indicator {
+            display: none;
+            padding: 12px 16px;
+            background: #2d3548;
+            border-radius: 18px;
+            width: fit-content;
+            align-self: flex-start;
+        }
+
+        .typing-indicator.active {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            animation: messageSlide 0.3s ease-out;
+        }
+
+        .typing-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #667eea;
+            animation: typingBounce 1.4s infinite;
+        }
+
+        .typing-dot:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .typing-dot:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes typingBounce {
+            0%, 60%, 100% { transform: translateY(0); }
+            30% { transform: translateY(-10px); }
+        }
+
+        .chat-input-area {
+            padding: 15px;
+            background: #1a1f3a;
+            border-top: 1px solid #2d3548;
+        }
+
+        .input-wrapper {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .chat-input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 2px solid #2d3548;
+            border-radius: 25px;
+            background: #0f1320;
+            color: white;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+
+        .chat-input:focus {
+            border-color: #667eea;
+        }
+
+        .send-button {
+            width: 45px;
+            height: 45px;
+            border: none;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            font-size: 20px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.2s;
+        }
+
+        .send-button:hover {
+            transform: scale(1.1);
+        }
+
+        .send-button:active {
+            transform: scale(0.95);
+        }
+
+        .system-message {
+            text-align: center;
+            color: #94a3b8;
+            font-size: 12px;
+            padding: 8px;
+            margin: 10px 0;
+            background: rgba(100, 116, 139, 0.1);
+            border-radius: 8px;
+        }
+
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #0f1320;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #667eea;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #764ba2;
+        }
+
+        .sender-name {
+            font-size: 11px;
+            color: #94a3b8;
+            margin-bottom: 4px;
+            padding: 0 4px;
+        }
+
+        .audio-message {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 14px;
+        }
+
+        .audio-icon {
+            font-size: 24px;
+        }
+
+        .audio-duration {
+            font-size: 12px;
+            opacity: 0.8;
+        }
+
+        .recording-indicator {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(239, 68, 68, 0.95);
+            color: white;
+            padding: 20px 30px;
+            border-radius: 15px;
+            font-weight: bold;
+            z-index: 1000;
+            animation: pulseScale 1s infinite;
+        }
+
+        .recording-indicator.active {
+            display: block;
+        }
+
+        @keyframes pulseScale {
+            0%, 100% { transform: translate(-50%, -50%) scale(1); }
+            50% { transform: translate(-50%, -50%) scale(1.05); }
+        }
+    </style>
 </head>
 <body>
-  <div class="container">
-    <h1>🔌 Socket.IO Test Client - Official Dispute System</h1>
-    
-    <!-- Connection Status -->
-    <div class="section">
-      <h2>Connection Status</h2>
-      <div id="connectionStatus" class="status disconnected">
-        ❌ Disconnected
-      </div>
-      <div class="input-group">
-        <label>Server URL</label>
-        <input type="text" id="serverUrl" value="http://localhost:5001" placeholder="http://localhost:5001">
-      </div>
-      <button onclick="connect()">Connect</button>
-      <button onclick="disconnect()" class="btn-danger">Disconnect</button>
-      <button onclick="testPing()" class="btn-secondary">Test Ping</button>
-    </div>
-
-    <div class="grid">
-      <!-- Authentication -->
-      <div class="section">
-        <h2>1. Authentication</h2>
-        <div class="input-group">
-          <label>JWT Token</label>
-          <textarea id="jwtToken" placeholder="Paste your JWT token here"></textarea>
+    <div class="chat-container">
+        <div class="chat-header">
+            <div class="header-top">
+                <h2>💬 Dispute Chat</h2>
+                <div class="connection-status">
+                    <div class="status-dot" id="statusDot"></div>
+                    <span id="statusText">Disconnected</span>
+                </div>
+            </div>
+            <div class="setup-form" id="setupForm">
+                <input type="text" id="tokenInput" placeholder="Paste JWT Token" 
+                       value="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2OTViNGU3ZTViNTE2NjQxMDYwYjhlMTUiLCJlbWFpbCI6InVzZXIxQGV4YW1wbGUuY29tIiwiaWF0IjoxNzY3NTkxNTUwLCJleHAiOjE3NjgxOTYzNTB9.gtGSjRQ8TKPpngqS6BurBzUe6vV5U7qJOT-AfUySQ20">
+                <input type="text" id="disputeInput" placeholder="Enter Dispute ID"
+                       value="695b4ec55b516641060b8e1d">
+                <button onclick="connectAndJoin()">🚀 Connect & Join Chat</button>
+            </div>
         </div>
-        <button onclick="authenticate()">Authenticate</button>
-      </div>
 
-      <!-- Join Dispute -->
-      <div class="section">
-        <h2>2. Join Dispute</h2>
-        <div class="input-group">
-          <label>Dispute ID</label>
-          <input type="text" id="disputeId" placeholder="Enter dispute ID">
+        <div class="chat-messages" id="chatMessages">
+            <div class="system-message">
+                👋 Welcome! Enter your token and dispute ID, then click "Connect & Join Chat" to start.
+            </div>
         </div>
-        <button onclick="joinDispute()">Join Dispute</button>
-        <button onclick="leaveDispute()" class="btn-danger">Leave Dispute</button>
-      </div>
+
+        <div class="typing-indicator" id="typingIndicator">
+            <div class="typing-dot"></div>
+            <div class="typing-dot"></div>
+            <div class="typing-dot"></div>
+        </div>
+
+        <div class="recording-indicator" id="recordingIndicator">
+            🎤 Other user is recording...
+        </div>
+
+        <div class="chat-input-area">
+            <div class="input-wrapper">
+                <input type="text" class="chat-input" id="messageInput" 
+                       placeholder="Type a message..." 
+                       onkeypress="handleKeyPress(event)"
+                       oninput="handleTyping()">
+                <button class="send-button" onclick="sendMessage()">➤</button>
+            </div>
+        </div>
     </div>
 
-    <!-- Send Message -->
-    <div class="section">
-      <h2>3. Send Message</h2>
-      <div class="input-group">
-        <label>Message Text</label>
-        <textarea id="messageText" placeholder="Type your message here"></textarea>
-      </div>
-      <button onclick="sendMessage()">Send Message</button>
-      <button onclick="startTyping()" class="btn-secondary">Start Typing</button>
-      <button onclick="stopTyping()" class="btn-secondary">Stop Typing</button>
-    </div>
+    <script>
+        let socket = null;
+        let currentDisputeId = null;
+        let currentUserId = null;
+        let currentUserRole = null;
+        let currentToken = null; // Store token properly
+        let typingTimeout = null;
+        const API_URL = 'http://localhost:5001';
 
-    <!-- Quick Actions -->
-    <div class="section">
-      <h2>4. Quick Actions</h2>
-      <button onclick="startRecording()" class="btn-secondary">Start Recording Audio</button>
-      <button onclick="stopRecording()" class="btn-secondary">Stop Recording Audio</button>
-      <button onclick="requestMessages()" class="btn-secondary">Request Messages</button>
-      <button onclick="endConversation()" class="btn-danger">End Conversation</button>
-    </div>
-
-    <!-- Event Log -->
-    <div class="section">
-      <h2>Event Log</h2>
-      <button onclick="clearLog()" class="btn-secondary" style="float: right;">Clear Log</button>
-      <div id="eventLog"></div>
-    </div>
-  </div>
-
-  <script>
-    let socket = null;
-    let isAuthenticated = false;
-    let currentDisputeId = null;
-
-    function log(type, eventName, data) {
-      const logDiv = document.getElementById('eventLog');
-      const entry = document.createElement('div');
-      entry.className = `log-entry log-${type}`;
-      
-      const timestamp = new Date().toLocaleTimeString();
-      const icon = {
-        sent: '📤',
-        received: '📥',
-        error: '❌',
-        info: 'ℹ️'
-      }[type] || '•';
-      
-      entry.innerHTML = `
-        <span class="timestamp">[${timestamp}]</span>
-        ${icon} <span class="event-name">${eventName}</span>
-        <pre>${JSON.stringify(data, null, 2)}</pre>
-      `;
-      
-      logDiv.insertBefore(entry, logDiv.firstChild);
-    }
-
-    function updateStatus(connected, authenticated = false) {
-      const statusDiv = document.getElementById('connectionStatus');
-      if (connected) {
-        if (authenticated) {
-          statusDiv.className = 'status authenticated';
-          statusDiv.innerHTML = '✅ Connected & Authenticated';
-        } else {
-          statusDiv.className = 'status connected';
-          statusDiv.innerHTML = '🔗 Connected (Not Authenticated)';
+        function addSystemMessage(text) {
+            const messagesDiv = document.getElementById('chatMessages');
+            const msgDiv = document.createElement('div');
+            msgDiv.className = 'system-message';
+            msgDiv.textContent = text;
+            messagesDiv.appendChild(msgDiv);
+            scrollToBottom();
         }
-      } else {
-        statusDiv.className = 'status disconnected';
-        statusDiv.innerHTML = '❌ Disconnected';
-      }
-    }
 
-    function connect() {
-      const serverUrl = document.getElementById('serverUrl').value;
-      
-      if (socket) {
-        socket.disconnect();
-      }
+        function addMessage(message, isSent, senderName = '') {
+            const messagesDiv = document.getElementById('chatMessages');
+            const msgDiv = document.createElement('div');
+            msgDiv.className = `message ${isSent ? 'sent' : 'received'}`;
+            msgDiv.dataset.messageId = message._id;
 
-      socket = io(serverUrl, {
-        transports: ['websocket'],
-        reconnection: true
-      });
+            let content = '';
+            
+            // Add sender name for received messages
+            if (!isSent && senderName) {
+                content += `<div class="sender-name">${senderName}</div>`;
+            }
 
-      socket.on('connect', () => {
-        log('info', 'connect', { socketId: socket.id });
-        updateStatus(true, false);
-      });
+            // Message bubble
+            if (message.message_type === 'text') {
+                content += `
+                    <div class="message-bubble">
+                        ${message.text_content}
+                    </div>
+                `;
+            } else {
+                content += `
+                    <div class="message-bubble audio-message">
+                        <span class="audio-icon">🎤</span>
+                        <span class="audio-duration">${message.audio_data?.duration || 30}s</span>
+                    </div>
+                `;
+            }
 
-      socket.on('disconnect', (reason) => {
-        log('info', 'disconnect', { reason });
-        updateStatus(false);
-        isAuthenticated = false;
-      });
+            // Message metadata (time + status)
+            const time = new Date(message.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+            content += `
+                <div class="message-meta">
+                    <span class="message-time">${time}</span>
+                    ${isSent ? `<span class="message-status" data-status="${message.status}">
+                        ${getStatusIcon(message.status)}
+                    </span>` : ''}
+                </div>
+            `;
 
-      socket.on('authenticated', (data) => {
-        log('received', 'authenticated', data);
-        isAuthenticated = true;
-        updateStatus(true, true);
-        alert('✅ Authentication successful!');
-      });
+            msgDiv.innerHTML = content;
+            messagesDiv.appendChild(msgDiv);
+            scrollToBottom();
 
-      socket.on('pong', (data) => {
-        log('received', 'pong', data);
-      });
+            // Auto-mark as delivered if it's a received message
+            if (!isSent && message.status === 'sent') {
+                setTimeout(() => {
+                    markAsDelivered(message._id);
+                }, 500);
 
-      socket.on('dispute_state', (data) => {
-        log('received', 'dispute_state', data);
-        currentDisputeId = data.dispute._id;
-        alert('✅ Joined dispute successfully!');
-      });
+                // Auto-mark as read after 2 seconds
+                setTimeout(() => {
+                    markAsRead(message._id);
+                }, 2000);
+            }
+        }
 
-      socket.on('user_online', (data) => {
-        log('received', 'user_online', data);
-      });
+        function getStatusIcon(status) {
+            switch(status) {
+                case 'sent':
+                    return '<span class="status-icon status-sent">✓</span>';
+                case 'delivered':
+                    return '<span class="status-icon status-delivered">✓✓</span>';
+                case 'read':
+                    return '<span class="status-icon status-read">✓✓</span>';
+                default:
+                    return '';
+            }
+        }
 
-      socket.on('user_offline', (data) => {
-        log('received', 'user_offline', data);
-      });
+        function updateMessageStatus(messageId, status) {
+            const messageDiv = document.querySelector(`[data-message-id="${messageId}"]`);
+            if (messageDiv) {
+                const statusSpan = messageDiv.querySelector('.message-status');
+                if (statusSpan) {
+                    statusSpan.dataset.status = status;
+                    statusSpan.innerHTML = getStatusIcon(status);
+                }
+            }
+        }
 
-      socket.on('new_message', (data) => {
-        log('received', 'new_message', data);
-      });
+        function markAsDelivered(messageId) {
+            if (socket && socket.connected) {
+                socket.emit('message_delivered', {
+                    message_id: messageId,
+                    dispute_id: currentDisputeId
+                });
+            }
+        }
 
-      socket.on('user_typing', (data) => {
-        log('received', 'user_typing', data);
-      });
+        function markAsRead(messageId) {
+            if (socket && socket.connected) {
+                socket.emit('message_read', {
+                    message_id: messageId,
+                    dispute_id: currentDisputeId
+                });
+            }
+        }
 
-      socket.on('user_stop_typing', (data) => {
-        log('received', 'user_stop_typing', data);
-      });
+        function scrollToBottom() {
+            const messagesDiv = document.getElementById('chatMessages');
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
 
-      socket.on('user_recording_audio', (data) => {
-        log('received', 'user_recording_audio', data);
-      });
+        function showTypingIndicator() {
+            document.getElementById('typingIndicator').classList.add('active');
+            scrollToBottom();
+        }
 
-      socket.on('user_stopped_recording', (data) => {
-        log('received', 'user_stopped_recording', data);
-      });
+        function hideTypingIndicator() {
+            document.getElementById('typingIndicator').classList.remove('active');
+        }
 
-      socket.on('message_status_update', (data) => {
-        log('received', 'message_status_update', data);
-      });
+        function showRecordingIndicator() {
+            document.getElementById('recordingIndicator').classList.add('active');
+        }
 
-      socket.on('messages_loaded', (data) => {
-        log('received', 'messages_loaded', data);
-      });
+        function hideRecordingIndicator() {
+            document.getElementById('recordingIndicator').classList.remove('active');
+        }
 
-      socket.on('conversation_ended', (data) => {
-        log('received', 'conversation_ended', data);
-        alert('Conversation ended!');
-      });
+        function handleTyping() {
+            if (!socket || !socket.connected) return;
 
-      socket.on('summary_ready', (data) => {
-        log('received', 'summary_ready', data);
-        alert('✅ AI Summary is ready!');
-      });
+            // Emit typing event
+            socket.emit('typing', { dispute_id: currentDisputeId });
 
-      socket.on('user_left', (data) => {
-        log('received', 'user_left', data);
-      });
+            // Clear previous timeout
+            clearTimeout(typingTimeout);
 
-      socket.on('error', (data) => {
-        log('error', 'error', data);
-        alert('❌ Error: ' + data.message);
-      });
-    }
+            // Set timeout to stop typing
+            typingTimeout = setTimeout(() => {
+                socket.emit('stop_typing', { dispute_id: currentDisputeId });
+            }, 2000);
+        }
 
-    function disconnect() {
-      if (socket) {
-        socket.disconnect();
-        log('info', 'disconnect', { manual: true });
-      }
-    }
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendMessage();
+            }
+        }
 
-    function authenticate() {
-      const token = document.getElementById('jwtToken').value.trim();
-      if (!token) {
-        alert('Please enter a JWT token');
-        return;
-      }
-      if (!socket || !socket.connected) {
-        alert('Please connect first');
-        return;
-      }
-      
-      const payload = { token };
-      socket.emit('authenticate', payload);
-      log('sent', 'authenticate', payload);
-    }
+        async function connectAndJoin() {
+            const token = document.getElementById('tokenInput').value.trim();
+            const disputeId = document.getElementById('disputeInput').value.trim();
 
-    function testPing() {
-      if (!socket || !socket.connected) {
-        alert('Please connect first');
-        return;
-      }
-      socket.emit('ping', {});
-      log('sent', 'ping', {});
-    }
+            if (!token || !disputeId) {
+                alert('Please enter both token and dispute ID');
+                return;
+            }
 
-    function joinDispute() {
-      const disputeId = document.getElementById('disputeId').value.trim();
-      if (!disputeId) {
-        alert('Please enter a dispute ID');
-        return;
-      }
-      if (!isAuthenticated) {
-        alert('Please authenticate first');
-        return;
-      }
-      
-      const payload = { dispute_id: disputeId };
-      socket.emit('join_dispute', payload);
-      log('sent', 'join_dispute', payload);
-    }
+            currentDisputeId = disputeId;
+            currentToken = token; // Store the token globally
 
-    function leaveDispute() {
-      if (!currentDisputeId) {
-        alert('Not in a dispute');
-        return;
-      }
-      
-      const payload = { dispute_id: currentDisputeId };
-      socket.emit('leave_dispute', payload);
-      log('sent', 'leave_dispute', payload);
-      currentDisputeId = null;
-    }
+            // Update UI
+            document.getElementById('setupForm').style.display = 'none';
+            addSystemMessage('🔄 Connecting to server...');
 
-    function sendMessage() {
-      const text = document.getElementById('messageText').value.trim();
-      const disputeId = document.getElementById('disputeId').value.trim();
-      
-      if (!text) {
-        alert('Please enter a message');
-        return;
-      }
-      if (!disputeId) {
-        alert('Please enter a dispute ID');
-        return;
-      }
-      if (!isAuthenticated) {
-        alert('Please authenticate first');
-        return;
-      }
-      
-      const payload = { dispute_id: disputeId, text_content: text };
-      socket.emit('send_message', payload);
-      log('sent', 'send_message', payload);
-      
-      document.getElementById('messageText').value = '';
-    }
+            // Connect to socket
+            socket = io(API_URL, {
+                auth: { token: token }
+            });
 
-    function startTyping() {
-      const disputeId = document.getElementById('disputeId').value.trim();
-      if (!disputeId) {
-        alert('Please enter a dispute ID');
-        return;
-      }
-      
-      const payload = { dispute_id: disputeId };
-      socket.emit('typing', payload);
-      log('sent', 'typing', payload);
-    }
+            socket.on('connect', () => {
+                updateConnectionStatus(true);
+                addSystemMessage('✅ Connected! Joining dispute...');
+                
+                // Join dispute room
+                socket.emit('join_dispute', { dispute_id: disputeId });
+            });
 
-    function stopTyping() {
-      const disputeId = document.getElementById('disputeId').value.trim();
-      if (!disputeId) {
-        alert('Please enter a dispute ID');
-        return;
-      }
-      
-      const payload = { dispute_id: disputeId };
-      socket.emit('stop_typing', payload);
-      log('sent', 'stop_typing', payload);
-    }
+            socket.on('connect_error', (error) => {
+                addSystemMessage('❌ Connection failed: ' + error.message);
+                updateConnectionStatus(false);
+            });
 
-    function startRecording() {
-      const disputeId = document.getElementById('disputeId').value.trim();
-      if (!disputeId) {
-        alert('Please enter a dispute ID');
-        return;
-      }
-      
-      const payload = { dispute_id: disputeId };
-      socket.emit('audio_recording_start', payload);
-      log('sent', 'audio_recording_start', payload);
-    }
+            socket.on('dispute_state', (data) => {
+                // IMPORTANT: Get the actual user ID from the JWT token match
+                const isCreator = data.is_creator;
+                const isJoiner = data.is_joiner;
+                
+                if (isCreator) {
+                    currentUserId = data.dispute.creator_id._id;
+                    currentUserRole = 'creator';
+                } else if (isJoiner) {
+                    currentUserId = data.dispute.joiner_id._id;
+                    currentUserRole = 'joiner';
+                }
+                
+                addSystemMessage(`✅ Joined as ${currentUserRole === 'creator' ? 'Creator' : 'Joiner'}`);
+                console.log('📊 Dispute State:', data);
+                console.log('Current User ID:', currentUserId);
+                console.log('Current User Role:', currentUserRole);
+                console.log('Dispute Status:', data.dispute.status);
+                
+                // Verify dispute is in conversation phase
+                if (data.dispute.status !== 'CONVERSATION') {
+                    addSystemMessage(`⚠️ Warning: Dispute status is "${data.dispute.status}" not "CONVERSATION"`);
+                } else {
+                    addSystemMessage('✅ Dispute is ready for conversation');
+                }
+                
+                // Load existing messages
+                loadMessages(disputeId, currentToken);
+            });
 
-    function stopRecording() {
-      const disputeId = document.getElementById('disputeId').value.trim();
-      if (!disputeId) {
-        alert('Please enter a dispute ID');
-        return;
-      }
-      
-      const payload = { dispute_id: disputeId };
-      socket.emit('audio_recording_stop', payload);
-      log('sent', 'audio_recording_stop', payload);
-    }
+            socket.on('user_online', (data) => {
+                addSystemMessage(`👤 ${data.user_name} joined the chat`);
+            });
 
-    function requestMessages() {
-      const disputeId = document.getElementById('disputeId').value.trim();
-      if (!disputeId) {
-        alert('Please enter a dispute ID');
-        return;
-      }
-      
-      const payload = { dispute_id: disputeId, limit: 50 };
-      socket.emit('request_messages', payload);
-      log('sent', 'request_messages', payload);
-    }
+            socket.on('user_offline', (data) => {
+                addSystemMessage(`👤 ${data.user_name} left the chat`);
+            });
 
-    function endConversation() {
-      const disputeId = document.getElementById('disputeId').value.trim();
-      if (!disputeId) {
-        alert('Please enter a dispute ID');
-        return;
-      }
-      
-      if (!confirm('Are you sure you want to end the conversation?')) {
-        return;
-      }
-      
-      const payload = { dispute_id: disputeId };
-      socket.emit('end_conversation', payload);
-      log('sent', 'end_conversation', payload);
-    }
+            socket.on('new_message', (data) => {
+                const isSent = data.sender_role === currentUserRole;
+                const senderName = data.message.sender_id.firstName + ' ' + data.message.sender_id.lastName;
+                addMessage(data.message, isSent, isSent ? '' : senderName);
+            });
 
-    function clearLog() {
-      document.getElementById('eventLog').innerHTML = '';
-    }
+            socket.on('message_error', (error) => {
+                addSystemMessage(`❌ Message Error: ${error.message}`);
+                console.error('Message error:', error);
+            });
 
-    // Auto-connect on page load
-    window.onload = () => {
-      log('info', 'Page Loaded', { ready: true });
-    };
-  </script>
+            socket.on('message_status_update', (data) => {
+                updateMessageStatus(data.message_id, data.status);
+            });
+
+            socket.on('user_typing', (data) => {
+                showTypingIndicator();
+            });
+
+            socket.on('user_stop_typing', (data) => {
+                hideTypingIndicator();
+            });
+
+            socket.on('user_recording_audio', (data) => {
+                showRecordingIndicator();
+            });
+
+            socket.on('user_stopped_recording', (data) => {
+                hideRecordingIndicator();
+            });
+
+            socket.on('conversation_ended', (data) => {
+                addSystemMessage('🛑 Conversation has ended');
+                // Update UI to prevent sending messages
+                const input = document.getElementById('messageInput');
+                input.disabled = true;
+                input.placeholder = 'Conversation ended';
+            });
+
+            socket.on('disconnect', () => {
+                updateConnectionStatus(false);
+                addSystemMessage('⚠️ Disconnected from server');
+            });
+        }
+
+        async function loadMessages(disputeId, token) {
+            try {
+                const response = await fetch(`${API_URL}/official-dispute/messages/${disputeId}`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.messages && data.messages.length > 0) {
+                        addSystemMessage(`📜 Loading ${data.messages.length} previous messages...`);
+                        data.messages.forEach(msg => {
+                            const isSent = msg.sender_role === currentUserRole;
+                            const senderName = msg.sender_id.firstName + ' ' + msg.sender_id.lastName;
+                            addMessage(msg, isSent, isSent ? '' : senderName);
+                        });
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to load messages:', error);
+            }
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const text = input.value.trim();
+
+            if (!text || !socket || !socket.connected) {
+                console.log('Cannot send:', { text, socketConnected: socket?.connected });
+                return;
+            }
+
+            if (!currentDisputeId) {
+                addSystemMessage('❌ Dispute ID not found. Please reconnect.');
+                return;
+            }
+
+            // Clear input immediately
+            input.value = '';
+
+            // Stop typing indicator
+            socket.emit('stop_typing', { dispute_id: currentDisputeId });
+
+            console.log('📤 Sending message via WebSocket:', {
+                dispute_id: currentDisputeId,
+                text_content: text
+            });
+
+            // Send via WebSocket with acknowledgment callback
+            socket.emit('send_message', 
+                { 
+                    dispute_id: currentDisputeId, 
+                    text_content: text 
+                },
+                (response) => {
+                    // This is the callback/acknowledgment
+                    if (response && response.success) {
+                        console.log('✅ Message sent successfully via WebSocket:', response);
+                        // Message will appear via 'new_message' event
+                    } else {
+                        console.error('❌ Send failed:', response);
+                        addSystemMessage(`❌ Failed: ${response?.message || 'Unknown error'}`);
+                        // Put message back in input
+                        input.value = text;
+                    }
+                }
+            );
+        }
+
+        function updateConnectionStatus(connected) {
+            const dot = document.getElementById('statusDot');
+            const text = document.getElementById('statusText');
+            if (connected) {
+                dot.classList.add('connected');
+                text.textContent = 'Connected';
+            } else {
+                dot.classList.remove('connected');
+                text.textContent = 'Disconnected';
+            }
+        }
+    </script>
 </body>
 </html>
