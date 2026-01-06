@@ -16,20 +16,19 @@ router.post("/create", auth, controller.createDispute);
 // Join dispute via invite code
 router.post("/join", auth, controller.joinDispute);
 
-// SCREEN 5: Conversation (WhatsApp-like Chat)
-// Send text message
+// SCREEN 5: Conversation (WebSocket-based Chat)
+// DEPRECATED: Use WebSocket 'send_message' event instead
 router.post("/message/text", auth, controller.sendTextMessage);
-
-// Send audio message (max 30 sec, 5 per user)
+// DEPRECATED: Use WebSocket 'send_audio' event instead
 router.post("/message/audio", auth, upload.single("audio"), controller.sendAudioMessage);
 
-// Get audio file (streaming)
+// Get audio file (for playback)
 router.get("/message/audio/:message_id", auth, controller.getAudioFile);
 
-// Get all messages for a dispute
+// Get all messages for a dispute (for loading history)
 router.get("/messages/:dispute_id", auth, controller.getConversationMessages);
 
-// End conversation (Stop button)
+// End conversation (Can use HTTP or WebSocket)
 router.post("/end-conversation", auth, controller.endConversation);
 
 // SCREEN 6: AI Summary Review
