@@ -17,9 +17,6 @@ router.post("/create", auth, controller.createDispute);
 router.post("/join", auth, controller.joinDispute);
 
 // SCREEN 5: Conversation (WebSocket-based Chat)
-// DEPRECATED: Use WebSocket 'send_message' event instead
-router.post("/message/text", auth, controller.sendTextMessage);
-// DEPRECATED: Use WebSocket 'send_audio' event instead
 router.post("/message/audio", auth, upload.single("audio"), controller.sendAudioMessage);
 
 // Get audio file (for playback)
