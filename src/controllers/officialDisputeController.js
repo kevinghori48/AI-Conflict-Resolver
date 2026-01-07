@@ -148,7 +148,7 @@ export const createDispute = async (req, res) => {
     });
 
   } catch (err) {
-    console.error("❌ Create dispute error:", err);
+    console.error("Create dispute error:", err);
     res.status(500).json({ message: "Failed to create dispute", error: err.message });
   }
 };
@@ -211,7 +211,7 @@ export const joinDispute = async (req, res) => {
     });
 
   } catch (err) {
-    console.error("❌ Join dispute error:", err);
+    console.error("Join dispute error:", err);
     res.status(500).json({ message: "Failed to join dispute", error: err.message });
   }
 };
@@ -348,7 +348,7 @@ export const getAudioFile = async (req, res) => {
     res.status(404).json({ message: "Audio file not found on server" });
 
   } catch (err) {
-    console.error("❌ Get audio error:", err);
+    console.error("Get audio error:", err);
     res.status(500).json({ message: "Failed to get audio file" });
   }
 };
@@ -389,12 +389,12 @@ export const getConversationMessages = async (req, res) => {
       success: true,
       count: messages.length,
       audio_count: dispute.conversation.audio_count,
-      messages: messages.reverse(), // Return in chronological order
+      messages: messages.reverse(),
       has_more: messages.length === parseInt(limit)
     });
 
   } catch (err) {
-    console.error("❌ Fetch messages error:", err);
+    console.error("Fetch messages error:", err);
     res.status(500).json({ message: "Failed to fetch messages", error: err.message });
   }
 };
@@ -463,7 +463,7 @@ export const endConversation = async (req, res) => {
     });
 
   } catch (err) {
-    console.error("❌ End conversation error:", err);
+    console.error("End conversation error:", err);
     res.status(500).json({ message: "Failed to end conversation", error: err.message });
   }
 };
@@ -471,7 +471,7 @@ export const endConversation = async (req, res) => {
 // HELPER: GENERATE AI SUMMARY
 async function generateAISummary(dispute, io) {
   try {
-    console.log("🤖 Generating AI summary for dispute:", dispute._id);
+    console.log("Generating AI summary for dispute:", dispute._id);
 
     const messages = await DisputeMessage.find({ 
       dispute_id: dispute._id 
@@ -544,10 +544,10 @@ OUTPUT JSON:
       });
     }
 
-    console.log("✅ Summary generated for dispute:", dispute._id);
+    console.log("Summary generated for dispute:", dispute._id);
 
   } catch (error) {
-    console.error("❌ Summary generation failed:", error);
+    console.error("Summary generation failed:", error);
     dispute.status = "CONVERSATION";
     await dispute.save();
     throw error;
@@ -560,7 +560,7 @@ export const reportSummary = async (req, res) => {
     const { dispute_id, feedback } = req.body;
 
     if (!feedback || feedback.trim() === "") {
-      return res.status(400).json({ 
+      return res.status(400).json({
         message: "Please provide feedback about what's wrong with the summary" 
       });
     }
@@ -841,47 +841,39 @@ OUTPUT JSON:
     await dispute.save();
     throw error;
   }
-}
+};
 
-// ENDPOINT 11: SELECT SOLUTIONS (Screen 7)
+// ENDPOINT 10: SELECT SOLUTIONS (Merged & Robust)
 export const selectSolutions = async (req, res) => {
   try {
     const { dispute_id, selected_solution_ids } = req.body;
 
+    // 1. Validation (Your Code)
     if (!Array.isArray(selected_solution_ids) || selected_solution_ids.length === 0) {
-      return res.status(400).json({ 
-        message: "Please select at least one solution" 
-      });
+      return res.status(400).json({ message: "Please select at least one solution" });
     }
 
     const dispute = await OfficialDispute.findById(dispute_id);
-    if (!dispute) {
-      return res.status(404).json({ message: "Dispute not found" });
-    }
+    if (!dispute) return res.status(404).json({ message: "Dispute not found" });
 
     if (dispute.status !== "OPTIONS_SELECTION") {
-      return res.status(400).json({ 
-        message: "Not in solution selection phase" 
-      });
+      return res.status(400).json({ message: "Not in solution selection phase" });
     }
 
     const isCreator = dispute.creator_id.toString() === req.user._id.toString();
     const isJoiner = dispute.joiner_id?.toString() === req.user._id.toString();
 
     if (!isCreator && !isJoiner) {
-      return res.status(403).json({ 
-        message: "You are not authorized to select solutions" 
-      });
+      return res.status(403).json({ message: "You are not authorized to select solutions" });
     }
 
     const validSolutionIds = dispute.solutions.map(s => s.id);
     const invalidSelections = selected_solution_ids.filter(id => !validSolutionIds.includes(id));
     if (invalidSelections.length > 0) {
-      return res.status(400).json({ 
-        message: `Invalid solution IDs: ${invalidSelections.join(', ')}` 
-      });
+      return res.status(400).json({ message: `Invalid solution IDs: ${invalidSelections.join(', ')}` });
     }
 
+    // 2. Save Selection
     if (isCreator) {
       dispute.solution_selections.creator_selected = selected_solution_ids;
     } else {
@@ -890,24 +882,46 @@ export const selectSolutions = async (req, res) => {
 
     await dispute.save();
 
-    if (dispute.solution_selections.creator_selected.length > 0 && 
-        dispute.solution_selections.joiner_selected.length > 0) {
-      const commonSolutions = dispute.solution_selections.creator_selected.filter(
-        id => dispute.solution_selections.joiner_selected.includes(id)
-      );
+    // 3. Completion Check (Logic Updated for Tie-Breaker)
+    const creatorVotes = dispute.solution_selections.creator_selected;
+    const joinerVotes = dispute.solution_selections.joiner_selected;
+
+    if (creatorVotes.length > 0 && joinerVotes.length > 0) {
+      const commonSolutions = creatorVotes.filter(id => joinerVotes.includes(id));
+      let finalOutcome = {};
+
+      if (commonSolutions.length > 0) {
+        // AGREEMENT FOUND
+        finalOutcome = {
+            type: "AGREEMENT",
+            common_solutions: commonSolutions,
+            message: `Agreement reached on options: ${commonSolutions.join(', ')}`
+        };
+      } else {
+        // DEADLOCK DETECTED -> TRIGGER AI JUDGE
+        console.log("No common solutions. Triggering AI Tie-Breaker...");
+        const tieBreaker = await generateTieBreaker(dispute, creatorVotes, joinerVotes, req.io);
+        finalOutcome = {
+            type: "AI_COMPROMISE",
+            solution_text: tieBreaker.text,
+            reasoning: tieBreaker.reasoning,
+            message: "No agreement reached. The AI Judge has issued a compromise."
+        };
+        // Save this special result
+        if (!dispute.ai_summary) dispute.ai_summary = {};
+        dispute.ai_summary.final_resolution = tieBreaker;
+      }
 
       dispute.status = "COMPLETED";
       await dispute.save();
 
+      // Notify Socket
       if (req.io) {
          req.io.to(dispute_id).emit("dispute_completed", {
           status: "COMPLETED",
-          creator_selections: dispute.solution_selections.creator_selected,
-          joiner_selections: dispute.solution_selections.joiner_selected,
-          common_solutions: commonSolutions,
-          message: commonSolutions.length > 0 
-            ? `Both parties have selected solutions. You agreed on ${commonSolutions.length} option(s): ${commonSolutions.join(', ')}!` 
-            : "Both parties have selected solutions. Review each other's preferences.",
+          creator_selections: creatorVotes,
+          joiner_selections: joinerVotes,
+          outcome: finalOutcome,
           timestamp: new Date()
         });
       }
@@ -916,18 +930,16 @@ export const selectSolutions = async (req, res) => {
         success: true,
         message: "Dispute completed successfully!",
         status: "COMPLETED",
-        creator_selections: dispute.solution_selections.creator_selected,
-        joiner_selections: dispute.solution_selections.joiner_selected,
-        common_solutions: commonSolutions,
-        has_agreement: commonSolutions.length > 0
+        outcome: finalOutcome
       });
     }
 
+    // 4. Waiting Logic
     if (req.io) {
        req.io.to(dispute_id).emit("selection_update", {
         message: "Selection recorded. Waiting for other party.",
-        has_creator_selected: dispute.solution_selections.creator_selected.length > 0,
-        has_joiner_selected: dispute.solution_selections.joiner_selected.length > 0,
+        has_creator_selected: creatorVotes.length > 0,
+        has_joiner_selected: joinerVotes.length > 0,
         timestamp: new Date()
       });
     }
@@ -940,8 +952,106 @@ export const selectSolutions = async (req, res) => {
     });
 
   } catch (err) {
-    console.error("  Select solutions error:", err);
+    console.error("Select solutions error:", err);
     res.status(500).json({ message: "Failed to select solutions", error: err.message });
+  }
+};
+
+// HELPER: GENERATE TIE-BREAKER SOLUTION
+// Now accepts the arrays of selected solution IDs from creator and joiner
+async function generateTieBreaker(dispute, creatorVotes, joinerVotes, io) {
+  try {
+    console.log("Generating tiebreaker for dispute:", dispute._id);
+
+    // 1. Retrieve the full details of the options selected by the users
+    const creatorId = Array.isArray(creatorVotes) ? creatorVotes[0] : creatorVotes;
+    const joinerId = Array.isArray(joinerVotes) ? joinerVotes[0] : joinerVotes;
+
+    const matchById = (s, id) => {
+      if (s == null || id == null) return false;
+      // allow matching against either `id` field or mongodb _id
+      try {
+        return s.id == id || (s._id && s._id.toString() === id.toString());
+      } catch (e) {
+        return s.id == id;
+      }
+    };
+
+    const creatorChoice = dispute.solutions.find(s => matchById(s, creatorId));
+    const joinerChoice = dispute.solutions.find(s => matchById(s, joinerId));
+
+    if (!creatorChoice || !joinerChoice) {
+      throw new Error("Selected solution options not found in dispute record");
+    }
+
+    const prompt = `You are a conflict resolution expert finalizing a dispute.
+
+CONTEXT:
+- Relationship: ${dispute.intake_data.relationship_type}${dispute.intake_data.custom_relationship ? ` (${dispute.intake_data.custom_relationship})` : ''}
+- Relationship Importance: ${dispute.intake_data.relationship_importance}
+- Goal: ${dispute.intake_data.goal}
+- Non-negotiables: ${dispute.intake_data.non_negotiables || "None"}
+
+THE CONFLICT:
+Person A (Creator) wanted Option ${creatorChoice.id}: "${creatorChoice.title}"
+- Logic: ${creatorChoice.description}
+
+Person B (Joiner) wanted Option ${joinerChoice.id}: "${joinerChoice.title}"
+- Logic: ${joinerChoice.description}
+
+TASK: Generate a final "Tiebreaker Resolution" that creates a healthy compromise between these two specific choices. It should acknowledge both sides but provide a definitive path forward.
+
+OUTPUT JSON:
+{
+  "final_resolution": {
+    "title": "Compromise Title (5-7 words)",
+    "description": "Detailed explanation of the final resolution (3-4 sentences)",
+    "why_it_works": "Explanation of how this balances Person A and Person B's needs",
+    "action_plan": [
+      "Step 1: Immediate action",
+      "Step 2: Follow up action",
+      "Step 3: Long term maintenance"
+    ]
+  }
+}`;
+
+    const response = await callGemini(prompt);
+    const result = cleanAIResponse(response);
+
+    if (!result.final_resolution || !result.final_resolution.title || !result.final_resolution.action_plan) {
+      throw new Error("Invalid tiebreaker structure from AI");
+    }
+
+    // 2. Update Dispute with the result
+    dispute.final_resolution = result.final_resolution;
+    dispute.status = "COMPLETED";
+    await dispute.save();
+
+    // 3. Emit the event
+    if (io) {
+      io.to(dispute._id.toString()).emit("tiebreaker_ready", {
+        status: "COMPLETED",
+        resolution: dispute.final_resolution,
+        message: "Final resolution generated based on your selections.",
+        timestamp: new Date()
+      });
+    }
+
+    console.log("  Tiebreaker generated successfully for dispute:", dispute._id);
+
+    // Return a normalized object for callers
+    return {
+      text: result.final_resolution.description,
+      reasoning: result.final_resolution.why_it_works,
+      final_resolution: result.final_resolution
+    };
+
+  } catch (error) {
+    console.error("  Tiebreaker generation failed:", error);
+    // Revert status so they can try again or so the UI doesn't hang
+    dispute.status = "OPTIONS_SELECTION";
+    await dispute.save();
+    throw error;
   }
 };
 
@@ -1054,12 +1164,12 @@ export const deleteDispute = async (req, res) => {
       dispute_id, 
       message_type: "audio" 
     });
-    
+
     for (const msg of messages) {
       if (msg.audio_data?.file_path && fs.existsSync(msg.audio_data.file_path)) {
         try {
           fs.unlinkSync(msg.audio_data.file_path);
-          console.log(`🗑️ Deleted audio file: ${msg.audio_data.file_path}`);
+          console.log(`Deleted audio file: ${msg.audio_data.file_path}`);
         } catch (err) {
           console.error(`  Failed to delete audio file: ${msg.audio_data.file_path}`, err);
         }

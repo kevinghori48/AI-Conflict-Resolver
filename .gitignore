@@ -5,3 +5,4 @@ reports/
 public/index.html
 .vscode/
 .dist/
+.hintrc

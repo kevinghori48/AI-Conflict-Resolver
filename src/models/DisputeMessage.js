@@ -33,7 +33,7 @@ const disputeMessageSchema = new mongoose.Schema({
     duration: Number // in seconds
   },
 
-  // Message status (WhatsApp-like)
+  // Message status
   status: {
     type: String,
     enum: ["sent", "delivered", "read"],

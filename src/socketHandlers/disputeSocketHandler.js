@@ -56,9 +56,7 @@ export const setupDisputeSocket = (io) => {
       });
     };
 
-    // ============================================
     // JOIN DISPUTE ROOM
-    // ============================================
     requireAuth("join_dispute", async ({ dispute_id }) => {
       console.log(`Join request: ${dispute_id} from ${socket.user.email}`);
       const dispute = await OfficialDispute.findById(dispute_id)
@@ -102,7 +100,7 @@ export const setupDisputeSocket = (io) => {
       });
     });
 
-    // SEND TEXT MESSAGE - 100% WEBSOCKET
+    // SEND TEXT MESSAGE
     requireAuth("send_message", async ({ dispute_id, text_content }, callback) => {
       console.log(`Message from ${socket.user.email}: "${text_content?.substring(0, 30)}..."`);
 
@@ -183,111 +181,13 @@ export const setupDisputeSocket = (io) => {
 
       } catch (error) {
         console.error("Send message error:", error);
-        const errorResponse = { 
-          success: false, 
+        const errorResponse = {
+          success: false,
           message: "Failed to send message",
-          error: error.message 
+          error: error.message
         };
         if (callback) callback(errorResponse);
         socket.emit("message_error", errorResponse);
-      }
-    });
-
-    // SEND AUDIO MESSAGE - 100% WEBSOCKET
-    requireAuth("send_audio", async ({ dispute_id, audio_data, duration }, callback) => {
-      console.log(`Audio from ${socket.user.email}: ${duration}s`);
-
-      try {
-        if (!audio_data) {
-          const error = { success: false, message: "No audio data provided" };
-          if (callback) callback(error);
-          return;
-        }
-
-        const dispute = await OfficialDispute.findById(dispute_id);
-        if (!dispute) {
-          const error = { success: false, message: "Dispute not found" };
-          if (callback) callback(error);
-          return;
-        }
-
-        if (dispute.status !== "CONVERSATION") {
-          const error = { success: false, message: "Not in conversation phase" };
-          if (callback) callback(error);
-          return;
-        }
-
-        const isCreator = dispute.creator_id.toString() === socket.userId;
-        const isJoiner = dispute.joiner_id?.toString() === socket.userId;
-
-        if (!isCreator && !isJoiner) {
-          const error = { success: false, message: "Not a participant" };
-          if (callback) callback(error);
-          return;
-        }
-
-        const senderRole = isCreator ? "creator" : "joiner";
-        const currentCount = dispute.conversation.audio_count[senderRole] || 0;
-
-        if (currentCount >= 5) {
-          const error = { 
-            success: false, 
-            message: `Maximum 5 audio messages allowed. You've reached the limit.` 
-          };
-          if (callback) callback(error);
-          return;
-        }
-
-        // Save audio (for full WebSocket, you'd save base64 or use a file service)
-        const message = await DisputeMessage.create({
-          dispute_id,
-          sender_id: socket.userId,
-          sender_role: senderRole,
-          message_type: "audio",
-          audio_data: {
-            data: audio_data, // Base64 or buffer
-            duration: duration || 30,
-            mimetype: "audio/webm"
-          },
-          status: "sent"
-        });
-
-        dispute.conversation.messages.push(message._id);
-        dispute.conversation.audio_count[senderRole] = currentCount + 1;
-        await dispute.save();
-
-        await message.populate('sender_id', 'firstName lastName email');
-
-        // Acknowledge to sender
-        if (callback) {
-          callback({
-            success: true,
-            message: message,
-            remaining_audios: 5 - dispute.conversation.audio_count[senderRole],
-            timestamp: new Date()
-          });
-        }
-
-        // Broadcast to room
-        io.to(dispute_id).emit("new_message", {
-          message,
-          sender_role: senderRole,
-          audio_count: dispute.conversation.audio_count,
-          remaining: 5 - dispute.conversation.audio_count[senderRole],
-          timestamp: new Date()
-        });
-
-        console.log(`Audio message broadcast to room ${dispute_id}`);
-
-      } catch (error) {
-        console.error("Send audio error:", error);
-        if (callback) {
-          callback({ 
-            success: false, 
-            message: "Failed to send audio",
-            error: error.message 
-          });
-        }
       }
     });
 
@@ -414,7 +314,7 @@ export const setupDisputeSocket = (io) => {
       });
       socket.currentDispute = null;
       socket.userRole = null;
-      console.log(`👋 ${socket.user.email} left dispute`);
+      console.log(`${socket.user.email} left dispute`);
     });
 
     // DISCONNECT
