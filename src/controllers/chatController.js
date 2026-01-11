@@ -27,10 +27,26 @@ function safeJSONParse(text) {
 }
 
 // =============================
-// SHARED: MESSAGE GENERATION LOGIC
+// 1. SEND MESSAGE (Batch Phase Logic)
 // =============================
-export const handleMessageGeneration = async (chat, report, userMessage, io, report_id) => {
+export const sendMessage = async (req, res) => {
   try {
+    const { report_id, message } = req.body;
+    const user_id = req.user._id;
+
+    if (!report_id || !message) return res.status(400).json({ message: "Report ID and message are required" });
+
+    // 1. Fetch Data
+    const report = await Report.findById(report_id);
+    if (!report) return res.status(404).json({ message: "Report not found" });
+
+    let chat = await Chat.findOne({ user_id, report_id });
+    // Initialize with empty phases array
+    if (!chat) chat = await Chat.create({ user_id, report_id, messages: [], phases: [] });
+
+    // 2. Add User Message (Working Memory)
+    chat.messages.push({ role: "user", content: message });
+
     // ====================================================
     // THE "PHASE END" DETECTOR
     // ====================================================
@@ -59,7 +75,7 @@ export const handleMessageGeneration = async (chat, report, userMessage, io, rep
     const reportContext = report.chat_context || "No background context.";
 
     let taskInstructions = `
-      1. Analyze the USER'S MESSAGE ("${userMessage}").
+      1. Analyze the USER'S MESSAGE ("${message}").
       2. Generate a tactical REPLY (1-2 sentences).
       3. "phase_summary" field should be NULL (do not summarize yet).
     `;
@@ -67,7 +83,7 @@ export const handleMessageGeneration = async (chat, report, userMessage, io, rep
     // IF 10th TURN: We inject extra instructions to summarize the block
     if (isPhaseEnd) {
         taskInstructions = `
-      1. Analyze the USER'S MESSAGE ("${userMessage}").
+      1. Analyze the USER'S MESSAGE ("${message}").
       2. Generate a tactical REPLY (1-2 sentences).
       3. CRITICAL: This is the end of Phase ${currentPhaseNum}.
          You MUST summarize the last 5 exchanges (the content in RECENT MESSAGES) into the "phase_summary" field.
@@ -77,19 +93,19 @@ export const handleMessageGeneration = async (chat, report, userMessage, io, rep
 
     const prompt = `
       ROLE: You are an elite Crisis Negotiator.
-
+      
       === STATIC CONTEXT ===
       ${reportContext}
-
+      
       === PREVIOUS COMPLETED PHASES ===
       ${phasesHistory || "Start of conversation (No phases yet)."}
-
+      
       === RECENT MESSAGES (Current Phase) ===
       ${recentHistory}
-
+      
       TASK:
       ${taskInstructions}
-
+      
       OUTPUT JSON FORMAT:
       {
         "reply": "response text...",
@@ -121,62 +137,20 @@ export const handleMessageGeneration = async (chat, report, userMessage, io, rep
     await chat.save();
 
     // 6. WebSocket Broadcast
+    const io = req.app.get("io");
     if (io) {
       io.to(report_id).emit("receive_message", {
         role: "model",
         content: aiReply,
         chat_id: chat._id,
-        timestamp: new Date(),
-        phase_completed: newPhase
-      });
-    }
-
-    return { aiReply, newPhase, chat_id: chat._id };
-  } catch (err) {
-    console.error("Message Generation Error:", err);
-    throw err;
-  }
-};
-
-// =============================
-// 1. SEND MESSAGE (Batch Phase Logic)
-// =============================
-export const sendMessage = async (req, res) => {
-  try {
-    const { report_id, message } = req.body;
-    const user_id = req.user._id;
-
-    if (!report_id || !message) return res.status(400).json({ message: "Report ID and message are required" });
-
-    // 1. Fetch Data
-    const report = await Report.findById(report_id);
-    if (!report) return res.status(404).json({ message: "Report not found" });
-
-    let chat = await Chat.findOne({ user_id, report_id });
-    // Initialize with empty phases array
-    if (!chat) chat = await Chat.create({ user_id, report_id, messages: [], phases: [] });
-
-    // 2. Add User Message (Working Memory)
-    chat.messages.push({ role: "user", content: message });
-
-    // Broadcast user message immediately
-    const io = req.app.get("io");
-    if (io) {
-      io.to(report_id).emit("receive_message", {
-        role: "user",
-        content: message,
-        chat_id: chat._id,
         timestamp: new Date()
       });
     }
 
-    // 3. Generate AI Response
-    const { aiReply, newPhase, chat_id } = await handleMessageGeneration(chat, report, message, io, report_id);
-
     return res.json({
       message: "Reply generated",
       reply: aiReply,
-      chat_id,
+      chat_id: chat._id,
       phase_completed: newPhase // Send to frontend to show a "Phase Complete" badge
     });
 
