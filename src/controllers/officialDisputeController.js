@@ -197,6 +197,7 @@ export const joinDispute = async (req, res) => {
         joiner_id: req.user._id,
         joiner_name: `${req.user.firstName} ${req.user.lastName}`,
         status: "CONVERSATION",
+        dispute_name: dispute.dispute_name,
         message: "Other party has joined. You can start the conversation.",
         timestamp: new Date()
       });
