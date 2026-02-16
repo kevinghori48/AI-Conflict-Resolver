@@ -197,6 +197,7 @@ export const joinDispute = async (req, res) => {
         joiner_id: req.user._id,
         joiner_name: `${req.user.firstName} ${req.user.lastName}`,
         status: "CONVERSATION",
+        dispute_name: dispute.dispute_name,
         message: "Other party has joined. You can start the conversation.",
         timestamp: new Date()
       });
@@ -216,154 +217,97 @@ export const joinDispute = async (req, res) => {
   }
 };
 
-// ENDPOINT 4: SEND AUDIO MESSAGE (HTTP Upload + WebSocket Notification)
 export const sendAudioMessage = async (req, res) => {
   try {
     const { dispute_id, duration } = req.body;
-    const audioFile = req.file; // From multer middleware
+    const file = req.file;
 
-    // Validate inputs
-    if (!dispute_id) {
-      if (audioFile?.path) fs.unlinkSync(audioFile.path);
-      return res.status(400).json({
-        success: false,
-        message: 'dispute_id is required'
-      });
+    if (!file) {
+      return res.status(400).json({ message: "No audio file provided" });
     }
 
-    if (!audioFile) {
-      return res.status(400).json({
-        success: false,
-        message: 'No audio file uploaded'
-      });
-    }
-
-    // Verify user authentication
-    if (!req.user || !req.user._id) {
-      if (audioFile.path) fs.unlinkSync(audioFile.path);
-      return res.status(401).json({
-        success: false,
-        message: 'Not authenticated'
-      });
-    }
-
-    // Get dispute and verify participation
-    const dispute = await OfficialDispute.findById(dispute_id)
-      .populate('creator_id', 'firstName lastName email')
-      .populate('joiner_id', 'firstName lastName email');
-
+    const dispute = await OfficialDispute.findById(dispute_id);
     if (!dispute) {
-      if (audioFile.path) fs.unlinkSync(audioFile.path);
-      return res.status(404).json({
-        success: false,
-        message: 'Dispute not found'
+      fs.unlinkSync(file.path);
+      return res.status(404).json({ message: "Dispute not found" });
+    }
+
+    if (dispute.status !== "CONVERSATION") {
+      fs.unlinkSync(file.path);
+      return res.status(400).json({
+        message: "Dispute is not in conversation phase"
       });
     }
 
-    // Check if user is a participant
-    const isCreator = dispute.creator_id._id.toString() === req.user._id.toString();
-    const isJoiner = dispute.joiner_id?._id.toString() === req.user._id.toString();
+    const isCreator = dispute.creator_id.toString() === req.user._id.toString();
+    const isJoiner = dispute.joiner_id?.toString() === req.user._id.toString();
 
     if (!isCreator && !isJoiner) {
-      if (audioFile.path) fs.unlinkSync(audioFile.path);
+      fs.unlinkSync(file.path);
       return res.status(403).json({
-        success: false,
-        message: 'Not authorized to send messages in this dispute'
+        message: "You are not a participant of this dispute"
       });
     }
 
-    // Check conversation phase
-    if (dispute.status !== 'CONVERSATION') {
-      if (audioFile.path) fs.unlinkSync(audioFile.path);
+    const senderRole = isCreator ? "creator" : "joiner";
+    const currentCount = dispute.conversation.audio_count[senderRole] || 0;
+    if (currentCount >= 5) {
+      fs.unlinkSync(file.path);
       return res.status(400).json({
-        success: false,
-        message: 'Not in conversation phase',
-        current_status: dispute.status
+        message: `Maximum 5 audio messages allowed per person. You've reached the limit.`
       });
     }
 
-    const senderRole = isCreator ? 'creator' : 'joiner';
-
-    // Create message in database
     const message = await DisputeMessage.create({
       dispute_id,
       sender_id: req.user._id,
       sender_role: senderRole,
-      message_type: 'audio',
+      message_type: "audio",
       audio_data: {
-        file_path: audioFile.path,
-        original_name: audioFile.originalname,
-        mimetype: audioFile.mimetype,
-        size: audioFile.size,
-        duration: duration ? parseInt(duration) : 30
+        file_path: file.path,
+        original_name: file.originalname,
+        mimetype: file.mimetype,
+        size: file.size,
+        duration: duration ? parseFloat(duration) : 30
       },
-      status: 'sent'
+      status: "sent"
     });
 
-    // Update dispute's message list and audio count
-    await OfficialDispute.findByIdAndUpdate(dispute_id, {
-      $push: { 'conversation.messages': message._id },
-      $inc: { [`conversation.audio_count.${senderRole}`]: 1 }
-    });
+    dispute.conversation.messages.push(message._id);
+    dispute.conversation.audio_count[senderRole] = currentCount + 1;
+    await dispute.save();
 
-    // Populate sender info
     await message.populate('sender_id', 'firstName lastName email');
 
-    // EMIT WEBSOCKET EVENT TO ALL USERS IN THE DISPUTE
+    // EMIT SOCKET EVENT
     if (req.io) {
-      const audioPayload = {
-        message: {
-          _id: message._id,
-          text_content: null,
-          message_type: 'audio',
-          audio_url: `/api/disputes/audio/${message._id}`,
-          audio_data: {
-            duration: message.audio_data.duration,
-            size: message.audio_data.size,
-            mimetype: message.audio_data.mimetype
-          },
-          sender_id: message.sender_id,
-          status: message.status,
-          timestamp: message.timestamp
-        },
+      req.io.to(dispute_id).emit("new_message", {
+        message,
         sender_role: senderRole,
-        dispute_id
-      };
-
-      // Emit to ALL users in the room (including sender)
-      req.io.to(dispute_id).emit('new_message', audioPayload);
-      
-      console.log(`🎤 Audio message sent by ${senderRole} in dispute ${dispute_id}`);
+        audio_count: dispute.conversation.audio_count,
+        remaining: 5 - dispute.conversation.audio_count[senderRole],
+        timestamp: new Date()
+      });
+      console.log(`Audio message broadcast to room ${dispute_id}`);
     }
 
-    // Return success response
-    res.status(201).json({
+    res.json({
       success: true,
-      message: message,
-      audio_url: `/api/disputes/audio/${message._id}`
+      message,
+      remaining_audios: 5 - dispute.conversation.audio_count[senderRole],
+      audio_count: dispute.conversation.audio_count
     });
 
-  } catch (error) {
-    console.error('Send audio error:', error);
-    
-    // Clean up uploaded file on error
-    if (req.file?.path && fs.existsSync(req.file.path)) {
-      try {
-        fs.unlinkSync(req.file.path);
-      } catch (unlinkErr) {
-        console.error('Failed to delete uploaded file:', unlinkErr);
-      }
+  } catch (err) {
+    console.error("Send audio error:", err);
+    if (req.file && req.file.path) {
+      fs.unlinkSync(req.file.path);
     }
-
-    res.status(500).json({
-      success: false,
-      message: 'Failed to send audio message',
-      error: error.message
-    });
+    res.status(500).json({ message: "Failed to send audio", error: err.message });
   }
 };
 
-// ENDPOINT 5: GET AUDIO FILE (For playback)
+// ENDPOINT 4: GET AUDIO FILE (KEEP - For playback)
 export const getAudioFile = async (req, res) => {
   try {
     const { message_id } = req.params;
@@ -410,7 +354,7 @@ export const getAudioFile = async (req, res) => {
   }
 };
 
-// ENDPOINT 6: GET CONVERSATION MESSAGES (For history)
+// ENDPOINT 5: GET CONVERSATION MESSAGES (KEEP - For history)
 export const getConversationMessages = async (req, res) => {
   try {
     const { dispute_id } = req.params;
@@ -446,7 +390,7 @@ export const getConversationMessages = async (req, res) => {
       success: true,
       count: messages.length,
       audio_count: dispute.conversation.audio_count,
-      messages: messages.reverse(), // Return in chronological order
+      messages: messages.reverse(),
       has_more: messages.length === parseInt(limit)
     });
 
@@ -456,7 +400,7 @@ export const getConversationMessages = async (req, res) => {
   }
 };
 
-// ENDPOINT 7: END CONVERSATION
+// ENDPOINT 6: END CONVERSATION (KEEP - Can use HTTP or WebSocket)
 export const endConversation = async (req, res) => {
   try {
     const { dispute_id } = req.body;
@@ -611,13 +555,13 @@ OUTPUT JSON:
   }
 }
 
-// ENDPOINT 8: REPORT SUMMARY (Regenerate)
+// ENDPOINT 9: REPORT SUMMARY (Regenerate)
 export const reportSummary = async (req, res) => {
   try {
     const { dispute_id, feedback } = req.body;
 
     if (!feedback || feedback.trim() === "") {
-      return res.status(400).json({ 
+      return res.status(400).json({
         message: "Please provide feedback about what's wrong with the summary" 
       });
     }
@@ -648,7 +592,7 @@ export const reportSummary = async (req, res) => {
     await dispute.save();
 
     if (req.io) {
-      req.io.to(dispute_id).emit("summary_regenerating", {
+       req.io.to(dispute_id).emit("summary_regenerating", {
         message: "Regenerating summary based on your feedback...",
         regeneration_count: dispute.ai_summary.regeneration_count,
         timestamp: new Date()
@@ -712,7 +656,7 @@ OUTPUT JSON:
     await dispute.save();
 
     if (req.io) {
-      req.io.to(dispute_id).emit("summary_updated", {
+       req.io.to(dispute_id).emit("summary_updated", {
         status: "SUMMARY_REVIEW",
         summary: dispute.ai_summary,
         message: "Summary has been regenerated based on feedback",
@@ -729,12 +673,12 @@ OUTPUT JSON:
     });
 
   } catch (err) {
-    console.error("Report summary error:", err);
+    console.error("  Report summary error:", err);
     res.status(500).json({ message: "Failed to regenerate summary", error: err.message });
   }
 };
 
-// ENDPOINT 9: APPROVE SUMMARY
+// ENDPOINT 10: APPROVE SUMMARY
 export const approveSummary = async (req, res) => {
   try {
     const { dispute_id } = req.body;
@@ -757,7 +701,6 @@ export const approveSummary = async (req, res) => {
         message: "You are not authorized to approve this summary" 
       });
     }
-
     if (isCreator) {
       dispute.summary_approval.creator_approved = true;
     } else {
@@ -771,7 +714,7 @@ export const approveSummary = async (req, res) => {
       await dispute.save();
 
       if (req.io) {
-        req.io.to(dispute_id).emit("generating_solutions", {
+         req.io.to(dispute_id).emit("generating_solutions", {
           status: "AI_SUMMARIZING",
           message: "Both parties approved. Generating solution options...",
           timestamp: new Date()
@@ -780,11 +723,11 @@ export const approveSummary = async (req, res) => {
 
       setTimeout(async () => {
         try {
-          await generateSolutions(dispute, req.io);
+          await generateSolutions(dispute,  req.io);
         } catch (error) {
-          console.error("Solution generation failed:", error);
+          console.error("  Solution generation failed:", error);
           if (req.io) {
-            req.io.to(dispute_id).emit("solution_generation_failed", {
+             req.io.to(dispute_id).emit("solution_generation_failed", {
               message: "Failed to generate solutions. Please try again.",
               error: error.message
             });
@@ -800,7 +743,7 @@ export const approveSummary = async (req, res) => {
     }
 
     if (req.io) {
-      req.io.to(dispute_id).emit("approval_update", {
+       req.io.to(dispute_id).emit("approval_update", {
         creator_approved: dispute.summary_approval.creator_approved,
         joiner_approved: dispute.summary_approval.joiner_approved,
         message: "Approval recorded. Waiting for other party.",
@@ -816,15 +759,15 @@ export const approveSummary = async (req, res) => {
     });
 
   } catch (err) {
-    console.error("Approve summary error:", err);
+    console.error("  Approve summary error:", err);
     res.status(500).json({ message: "Failed to approve summary", error: err.message });
   }
 };
 
-// HELPER: GENERATE SOLUTIONS
+// HELPER: GENERATE SOLUTIONS (Screen 7)
 async function generateSolutions(dispute, io) {
   try {
-    console.log("🤖 Generating solutions for dispute:", dispute._id);
+    console.log("Generating solutions for dispute:", dispute._id);
 
     const prompt = `You are a conflict resolution expert generating solution options.
 
@@ -891,55 +834,47 @@ OUTPUT JSON:
       });
     }
 
-    console.log("Solutions generated successfully for dispute:", dispute._id);
+    console.log("  Solutions generated successfully for dispute:", dispute._id);
 
   } catch (error) {
-    console.error("Solution generation failed:", error);
+    console.error("  Solution generation failed:", error);
     dispute.status = "SUMMARY_REVIEW";
     await dispute.save();
     throw error;
   }
-}
+};
 
-// ENDPOINT 10: SELECT SOLUTIONS
+// ENDPOINT 10: SELECT SOLUTIONS (Merged & Robust)
 export const selectSolutions = async (req, res) => {
   try {
     const { dispute_id, selected_solution_ids } = req.body;
 
+    // 1. Validation (Your Code)
     if (!Array.isArray(selected_solution_ids) || selected_solution_ids.length === 0) {
-      return res.status(400).json({ 
-        message: "Please select at least one solution" 
-      });
+      return res.status(400).json({ message: "Please select at least one solution" });
     }
 
     const dispute = await OfficialDispute.findById(dispute_id);
-    if (!dispute) {
-      return res.status(404).json({ message: "Dispute not found" });
-    }
+    if (!dispute) return res.status(404).json({ message: "Dispute not found" });
 
     if (dispute.status !== "OPTIONS_SELECTION") {
-      return res.status(400).json({ 
-        message: "Not in solution selection phase" 
-      });
+      return res.status(400).json({ message: "Not in solution selection phase" });
     }
 
     const isCreator = dispute.creator_id.toString() === req.user._id.toString();
     const isJoiner = dispute.joiner_id?.toString() === req.user._id.toString();
 
     if (!isCreator && !isJoiner) {
-      return res.status(403).json({ 
-        message: "You are not authorized to select solutions" 
-      });
+      return res.status(403).json({ message: "You are not authorized to select solutions" });
     }
 
     const validSolutionIds = dispute.solutions.map(s => s.id);
     const invalidSelections = selected_solution_ids.filter(id => !validSolutionIds.includes(id));
     if (invalidSelections.length > 0) {
-      return res.status(400).json({ 
-        message: `Invalid solution IDs: ${invalidSelections.join(', ')}` 
-      });
+      return res.status(400).json({ message: `Invalid solution IDs: ${invalidSelections.join(', ')}` });
     }
 
+    // 2. Save Selection
     if (isCreator) {
       dispute.solution_selections.creator_selected = selected_solution_ids;
     } else {
@@ -948,24 +883,46 @@ export const selectSolutions = async (req, res) => {
 
     await dispute.save();
 
-    if (dispute.solution_selections.creator_selected.length > 0 && 
-        dispute.solution_selections.joiner_selected.length > 0) {
-      const commonSolutions = dispute.solution_selections.creator_selected.filter(
-        id => dispute.solution_selections.joiner_selected.includes(id)
-      );
+    // 3. Completion Check (Logic Updated for Tie-Breaker)
+    const creatorVotes = dispute.solution_selections.creator_selected;
+    const joinerVotes = dispute.solution_selections.joiner_selected;
+
+    if (creatorVotes.length > 0 && joinerVotes.length > 0) {
+      const commonSolutions = creatorVotes.filter(id => joinerVotes.includes(id));
+      let finalOutcome = {};
+
+      if (commonSolutions.length > 0) {
+        // AGREEMENT FOUND
+        finalOutcome = {
+            type: "AGREEMENT",
+            common_solutions: commonSolutions,
+            message: `Agreement reached on options: ${commonSolutions.join(', ')}`
+        };
+      } else {
+        // DEADLOCK DETECTED -> TRIGGER AI JUDGE
+        console.log("No common solutions. Triggering AI Tie-Breaker...");
+        const tieBreaker = await generateTieBreaker(dispute, creatorVotes, joinerVotes, req.io);
+        finalOutcome = {
+            type: "AI_COMPROMISE",
+            solution_text: tieBreaker.text,
+            reasoning: tieBreaker.reasoning,
+            message: "No agreement reached. The AI Judge has issued a compromise."
+        };
+        // Save this special result
+        if (!dispute.ai_summary) dispute.ai_summary = {};
+        dispute.ai_summary.final_resolution = tieBreaker;
+      }
 
       dispute.status = "COMPLETED";
       await dispute.save();
 
+      // Notify Socket
       if (req.io) {
-        req.io.to(dispute_id).emit("dispute_completed", {
+         req.io.to(dispute_id).emit("dispute_completed", {
           status: "COMPLETED",
-          creator_selections: dispute.solution_selections.creator_selected,
-          joiner_selections: dispute.solution_selections.joiner_selected,
-          common_solutions: commonSolutions,
-          message: commonSolutions.length > 0 
-            ? `Both parties have selected solutions. You agreed on ${commonSolutions.length} option(s): ${commonSolutions.join(', ')}!` 
-            : "Both parties have selected solutions. Review each other's preferences.",
+          creator_selections: creatorVotes,
+          joiner_selections: joinerVotes,
+          outcome: finalOutcome,
           timestamp: new Date()
         });
       }
@@ -974,18 +931,16 @@ export const selectSolutions = async (req, res) => {
         success: true,
         message: "Dispute completed successfully!",
         status: "COMPLETED",
-        creator_selections: dispute.solution_selections.creator_selected,
-        joiner_selections: dispute.solution_selections.joiner_selected,
-        common_solutions: commonSolutions,
-        has_agreement: commonSolutions.length > 0
+        outcome: finalOutcome
       });
     }
 
+    // 4. Waiting Logic
     if (req.io) {
-      req.io.to(dispute_id).emit("selection_update", {
+       req.io.to(dispute_id).emit("selection_update", {
         message: "Selection recorded. Waiting for other party.",
-        has_creator_selected: dispute.solution_selections.creator_selected.length > 0,
-        has_joiner_selected: dispute.solution_selections.joiner_selected.length > 0,
+        has_creator_selected: creatorVotes.length > 0,
+        has_joiner_selected: joinerVotes.length > 0,
         timestamp: new Date()
       });
     }
@@ -1003,7 +958,105 @@ export const selectSolutions = async (req, res) => {
   }
 };
 
-// ENDPOINT 11: GET DISPUTE STATUS
+// HELPER: GENERATE TIE-BREAKER SOLUTION
+// Now accepts the arrays of selected solution IDs from creator and joiner
+async function generateTieBreaker(dispute, creatorVotes, joinerVotes, io) {
+  try {
+    console.log("Generating tiebreaker for dispute:", dispute._id);
+
+    // 1. Retrieve the full details of the options selected by the users
+    const creatorId = Array.isArray(creatorVotes) ? creatorVotes[0] : creatorVotes;
+    const joinerId = Array.isArray(joinerVotes) ? joinerVotes[0] : joinerVotes;
+
+    const matchById = (s, id) => {
+      if (s == null || id == null) return false;
+      // allow matching against either `id` field or mongodb _id
+      try {
+        return s.id == id || (s._id && s._id.toString() === id.toString());
+      } catch (e) {
+        return s.id == id;
+      }
+    };
+
+    const creatorChoice = dispute.solutions.find(s => matchById(s, creatorId));
+    const joinerChoice = dispute.solutions.find(s => matchById(s, joinerId));
+
+    if (!creatorChoice || !joinerChoice) {
+      throw new Error("Selected solution options not found in dispute record");
+    }
+
+    const prompt = `You are a conflict resolution expert finalizing a dispute.
+
+CONTEXT:
+- Relationship: ${dispute.intake_data.relationship_type}${dispute.intake_data.custom_relationship ? ` (${dispute.intake_data.custom_relationship})` : ''}
+- Relationship Importance: ${dispute.intake_data.relationship_importance}
+- Goal: ${dispute.intake_data.goal}
+- Non-negotiables: ${dispute.intake_data.non_negotiables || "None"}
+
+THE CONFLICT:
+Person A (Creator) wanted Option ${creatorChoice.id}: "${creatorChoice.title}"
+- Logic: ${creatorChoice.description}
+
+Person B (Joiner) wanted Option ${joinerChoice.id}: "${joinerChoice.title}"
+- Logic: ${joinerChoice.description}
+
+TASK: Generate a final "Tiebreaker Resolution" that creates a healthy compromise between these two specific choices. It should acknowledge both sides but provide a definitive path forward.
+
+OUTPUT JSON:
+{
+  "final_resolution": {
+    "title": "Compromise Title (5-7 words)",
+    "description": "Detailed explanation of the final resolution (3-4 sentences)",
+    "why_it_works": "Explanation of how this balances Person A and Person B's needs",
+    "action_plan": [
+      "Step 1: Immediate action",
+      "Step 2: Follow up action",
+      "Step 3: Long term maintenance"
+    ]
+  }
+}`;
+
+    const response = await callGemini(prompt);
+    const result = cleanAIResponse(response);
+
+    if (!result.final_resolution || !result.final_resolution.title || !result.final_resolution.action_plan) {
+      throw new Error("Invalid tiebreaker structure from AI");
+    }
+
+    // 2. Update Dispute with the result
+    dispute.final_resolution = result.final_resolution;
+    dispute.status = "COMPLETED";
+    await dispute.save();
+
+    // 3. Emit the event
+    if (io) {
+      io.to(dispute._id.toString()).emit("tiebreaker_ready", {
+        status: "COMPLETED",
+        resolution: dispute.final_resolution,
+        message: "Final resolution generated based on your selections.",
+        timestamp: new Date()
+      });
+    }
+
+    console.log("  Tiebreaker generated successfully for dispute:", dispute._id);
+
+    // Return a normalized object for callers
+    return {
+      text: result.final_resolution.description,
+      reasoning: result.final_resolution.why_it_works,
+      final_resolution: result.final_resolution
+    };
+
+  } catch (error) {
+    console.error("  Tiebreaker generation failed:", error);
+    // Revert status so they can try again or so the UI doesn't hang
+    dispute.status = "OPTIONS_SELECTION";
+    await dispute.save();
+    throw error;
+  }
+};
+
+// ENDPOINT 12: GET DISPUTE STATUS
 export const getDisputeStatus = async (req, res) => {
   try {
     const { dispute_id } = req.params;
@@ -1043,12 +1096,12 @@ export const getDisputeStatus = async (req, res) => {
     });
 
   } catch (err) {
-    console.error("Get dispute status error:", err);
+    console.error("  Get dispute status error:", err);
     res.status(500).json({ message: "Failed to fetch dispute", error: err.message });
   }
 };
 
-// ENDPOINT 12: GET USER'S DISPUTES
+// ENDPOINT 13: GET USER'S DISPUTES
 export const getUserDisputes = async (req, res) => {
   try {
     const { status, limit = 50 } = req.query;
@@ -1078,12 +1131,12 @@ export const getUserDisputes = async (req, res) => {
     });
 
   } catch (err) {
-    console.error("Get user disputes error:", err);
+    console.error("  Get user disputes error:", err);
     res.status(500).json({ message: "Failed to fetch disputes", error: err.message });
   }
 };
 
-// ENDPOINT 13: DELETE DISPUTE
+// ENDPOINT 14: DELETE DISPUTE
 export const deleteDispute = async (req, res) => {
   try {
     const { dispute_id } = req.params;
@@ -1112,14 +1165,14 @@ export const deleteDispute = async (req, res) => {
       dispute_id, 
       message_type: "audio" 
     });
-    
+
     for (const msg of messages) {
       if (msg.audio_data?.file_path && fs.existsSync(msg.audio_data.file_path)) {
         try {
           fs.unlinkSync(msg.audio_data.file_path);
-          console.log(`🗑️ Deleted audio file: ${msg.audio_data.file_path}`);
+          console.log(`Deleted audio file: ${msg.audio_data.file_path}`);
         } catch (err) {
-          console.error(`❌ Failed to delete audio file: ${msg.audio_data.file_path}`, err);
+          console.error(`  Failed to delete audio file: ${msg.audio_data.file_path}`, err);
         }
       }
     }
@@ -1132,7 +1185,7 @@ export const deleteDispute = async (req, res) => {
 
     // Emit socket event
     if (req.io) {
-      req.io.to(dispute_id).emit("dispute_deleted", {
+       req.io.to(dispute_id).emit("dispute_deleted", {
         message: "This dispute has been deleted by the creator",
         timestamp: new Date()
       });
@@ -1144,7 +1197,7 @@ export const deleteDispute = async (req, res) => {
     });
 
   } catch (err) {
-    console.error("Delete dispute error:", err);
+    console.error("  Delete dispute error:", err);
     res.status(500).json({ message: "Failed to delete dispute", error: err.message });
   }
 };
