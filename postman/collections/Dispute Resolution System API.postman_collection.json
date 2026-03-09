@@ -1,0 +1,683 @@
+{
+  "info": {
+    "_postman_id": "30804edf-768f-4055-a04d-51c75da94075",
+    "name": "Dispute Resolution System API",
+    "description": "Complete API collection for the Dispute Resolution System with WebSocket support",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Login User 1",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    var jsonData = pm.response.json();",
+                  "    console.log('User 2 Token:', jsonData.token);",
+                  "    console.log('User 2 ID:', jsonData.user._id);",
+                  "    console.log('Save this token for the second user!');",
+                  "}"
+                ],
+                "type": "text/javascript",
+                "id": "d2a2ea1b-6508-4e24-8ac2-9e39d3a9ec06"
+              }
+            }
+          ],
+          "id": "1d2c7f49-870d-4b96-8937-5d2e0dd0ac6f",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user2@example.com\",\n  \"firstName\": \"Jane\",\n  \"lastName\": \"Smith\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Login as second user to test joining dispute"
+          },
+          "response": []
+        },
+        {
+          "name": "Login User 2",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "755b7922-db56-495c-b091-04d2a31b6e72",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.collectionVariables.set('token_b', jsonData.token);",
+                  "    pm.collectionVariables.set('userId', jsonData.user._id);",
+                  "    console.log('Token saved:', jsonData.token);",
+                  "    console.log('User ID saved:', jsonData.user._id);",
+                  "}"
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ],
+          "id": "8ffbdc75-1cda-4654-9db0-94c24d8d26d0",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user2@example.com\",\n  \"firstName\": \"Jane\",\n  \"lastName\": \"Smith\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Login as second user to test joining dispute"
+          },
+          "response": []
+        }
+      ],
+      "id": "40eae396-d21f-47ed-b03a-ee59b4f0201d"
+    },
+    {
+      "name": "Screen 1 & 2 - Create Dispute",
+      "item": [
+        {
+          "name": "Get Relationship Questions",
+          "id": "c1850fab-05d8-470f-838e-db26a5180f9c",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/official-dispute/questions/couple",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "official-dispute",
+                "questions",
+                "couple"
+              ]
+            },
+            "description": "Get relationship-specific questions. Options: couple, roommates, friends, family, workplace, other"
+          },
+          "response": []
+        },
+        {
+          "name": "Create Dispute",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.collectionVariables.set('disputeId', jsonData.dispute_id);",
+                  "    pm.collectionVariables.set('inviteCode', jsonData.invite_code);",
+                  "    console.log('Dispute ID:', jsonData.dispute_id);",
+                  "    console.log('Invite Code:', jsonData.invite_code);",
+                  "}"
+                ],
+                "type": "text/javascript",
+                "id": "ceadfcbf-8178-4777-bbe4-9a5b49a36cb6"
+              }
+            }
+          ],
+          "id": "06984c1d-fe1d-4546-9222-2c0ff737b432",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"dispute_name\": \"Apartment Cleaning Schedule\",\n  \"relationship_type\": \"roommates\",\n  \"relationship_importance\": \"high\",\n  \"goal\": \"Create a fair cleaning schedule that works for both of us\",\n  \"non_negotiables\": \"Kitchen must be cleaned daily\",\n  \"avoid_topics\": \"Past conflicts about rent\",\n  \"urgency\": \"1_week\",\n  \"relationship_questions\": [\n    {\n      \"question\": \"How long have you lived together?\",\n      \"answer\": \"6 months\"\n    },\n    {\n      \"question\": \"What are the main issues?\",\n      \"answer\": \"Dishes pile up in the sink\"\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/official-dispute/create",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "official-dispute",
+                "create"
+              ]
+            },
+            "description": "Create a new dispute (User 1)\n\n{{baseUrl}}/official-dispute/create\n\nheader  \nkey :Content-Type\n\nvalue :application/json"
+          },
+          "response": []
+        }
+      ],
+      "id": "61374e32-5a7d-469b-9510-4bef575b604c"
+    },
+    {
+      "name": "Screen 4 - Join Dispute",
+      "item": [
+        {
+          "name": "Join Dispute",
+          "id": "735daf61-5df0-4b75-b6f1-cc29ba1cff17",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"invite_code\": \"{{inviteCode}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/official-dispute/join",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "official-dispute",
+                "join"
+              ]
+            },
+            "description": "Join dispute using invite code (Use User 2's token!)"
+          },
+          "response": []
+        }
+      ],
+      "id": "0609b852-d997-45ab-af44-7657da35f1b1"
+    },
+    {
+      "name": "Screen 5 - Conversation",
+      "item": [
+        {
+          "name": "Send Audio",
+          "id": "13959310-5c60-433f-ab68-3ec6fe7a5cf9",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token_a}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "audio",
+                  "type": "file",
+                  "src": []
+                },
+                {
+                  "key": "dispute_id",
+                  "value": "{{disputeId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "duration",
+                  "value": "15",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/official-dispute/message/audio",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "official-dispute",
+                "message",
+                "audio"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get All Messages",
+          "id": "7081c18d-bc3b-442e-841f-c85a5a669245",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/official-dispute/messages/{{disputeId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "official-dispute",
+                "messages",
+                "{{disputeId}}"
+              ]
+            },
+            "description": "Get all messages in the conversation"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Audio File",
+          "id": "84c0055a-cb4b-4c3a-a3d1-fa8dd7813cc1",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/official-dispute/message/audio/:message_id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "official-dispute",
+                "message",
+                "audio",
+                ":message_id"
+              ],
+              "variable": [
+                {
+                  "key": "message_id",
+                  "value": "PASTE_MESSAGE_ID_HERE"
+                }
+              ]
+            },
+            "description": "Stream audio file"
+          },
+          "response": []
+        },
+        {
+          "name": "End Conversation",
+          "id": "24bf1688-1402-46c1-b2d4-0ca838a68ff6",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"dispute_id\": \"{{disputeId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/official-dispute/end-conversation",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "official-dispute",
+                "end-conversation"
+              ]
+            },
+            "description": "End conversation and trigger AI summary generation"
+          },
+          "response": []
+        }
+      ],
+      "id": "3f59a526-cee9-4fec-ad0d-ce35f5ade4eb"
+    },
+    {
+      "name": "Screen 6 - AI Summary",
+      "item": [
+        {
+          "name": "Report Summary (Regenerate)",
+          "id": "dec92aa2-1891-474c-92f3-f2fa5a25515d",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"dispute_id\": \"{{disputeId}}\",\n  \"feedback\": \"The summary doesn't capture the main point about the kitchen cleaning responsibility\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/official-dispute/summary/report",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "official-dispute",
+                "summary",
+                "report"
+              ]
+            },
+            "description": "Report issues with summary to regenerate it"
+          },
+          "response": []
+        },
+        {
+          "name": "Approve Summary (User 1)",
+          "id": "8dcf0298-4e4c-444a-b8e5-8a42cdb732e4",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"dispute_id\": \"{{disputeId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/official-dispute/summary/approve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "official-dispute",
+                "summary",
+                "approve"
+              ]
+            },
+            "description": "Approve summary (User 1)"
+          },
+          "response": []
+        },
+        {
+          "name": "Approve Summary (User 2)",
+          "id": "b52a050c-f3c5-4f96-bf50-f43f2eafe0bb",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"dispute_id\": \"{{disputeId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/official-dispute/summary/approve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "official-dispute",
+                "summary",
+                "approve"
+              ]
+            },
+            "description": "Approve summary (Switch to User 2's token!)"
+          },
+          "response": []
+        }
+      ],
+      "id": "0bf7f7bf-c099-43c4-84d6-232ea6c2b9c7"
+    },
+    {
+      "name": "Screen 7 - Solutions",
+      "item": [
+        {
+          "name": "Select Solutions (User 1)",
+          "id": "588e1c1f-70a0-484e-a35f-0a0090c4558b",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"dispute_id\": \"{{disputeId}}\",\n  \"selected_solution_ids\": [\"A\", \"C\"]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/official-dispute/solutions/select",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "official-dispute",
+                "solutions",
+                "select"
+              ]
+            },
+            "description": "Select preferred solutions (User 1)"
+          },
+          "response": []
+        },
+        {
+          "name": "Select Solutions (User 2)",
+          "id": "16628836-40c3-4cfc-bd03-2fd88a526beb",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"dispute_id\": \"{{disputeId}}\",\n  \"selected_solution_ids\": [\"B\", \"C\"]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/official-dispute/solutions/select",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "official-dispute",
+                "solutions",
+                "select"
+              ]
+            },
+            "description": "Select solutions (Switch to User 2's token!)"
+          },
+          "response": []
+        }
+      ],
+      "id": "ea95bb9c-dabb-4842-af50-f75de631ccb0"
+    },
+    {
+      "name": "General",
+      "item": [
+        {
+          "name": "Get Dispute Status",
+          "id": "8eb6d3bf-9be7-49b0-aad6-dc8b2466651a",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token_a}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/official-dispute/status/{{disputeId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "official-dispute",
+                "status",
+                "{{disputeId}}"
+              ]
+            },
+            "description": "Get complete dispute details and current status"
+          },
+          "response": []
+        },
+        {
+          "name": "Get My Disputes",
+          "id": "d050e08e-a7c6-4162-99eb-57f9fb71fadb",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token_a}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/official-dispute/my-disputes?limit=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "official-dispute",
+                "my-disputes"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "CONVERSATION",
+                  "disabled": true
+                },
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": "Get all disputes for current user"
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Dispute",
+          "id": "d21e1724-e076-4c36-a572-2547afcfc60a",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token_a}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/official-dispute/delete/{{disputeId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "official-dispute",
+                "delete",
+                "{{disputeId}}"
+              ]
+            },
+            "description": "Delete dispute (only creator, not if completed)"
+          },
+          "response": []
+        }
+      ],
+      "id": "6a56d051-fa3d-4fa0-bcb3-6b88c61c7249"
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{authToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "id": "493447c0-aea4-4f4f-ae39-f7ecb7a61749",
+      "key": "baseUrl",
+      "value": "http://localhost:5001",
+      "type": "string"
+    },
+    {
+      "id": "2d712f8a-7b55-432f-bbde-f40b2e28b803",
+      "key": "authToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "id": "8ff19768-ad23-4f6f-845b-2ebdf199bc81",
+      "key": "userId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "id": "3a75a803-8c12-41b6-b815-ab44fa82802c",
+      "key": "disputeId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "id": "9eab44f2-4291-4428-999f-dc6abc78e863",
+      "key": "inviteCode",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "id": "9c6c4426-0903-40f6-bbb4-8ccc076397e6",
+      "key": "token_a",
+      "value": ""
+    },
+    {
+      "id": "2fd52830-1212-48ec-bcd7-3d76ae6f04b3",
+      "key": "token_b",
+      "value": ""
+    }
+  ]
+}

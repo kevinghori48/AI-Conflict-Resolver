@@ -1,0 +1,337 @@
+{
+  "info": {
+    "_postman_id": "c03f682b-ba7f-475f-960d-fbedbde311e6",
+    "name": "Small Dispute",
+    "description": "Complete Postman guide for the Small Dispute feature.\n\nBase URL: {{base_url}}/small-dispute (adjust prefix to match your router mount path)\n\nVariables to set:\n- base_url: http://localhost:5001/api\n- token_a: JWT for Person A (Creator)\n- token_b: JWT for Person B (Joiner)\n- dispute_id: filled automatically from Step 1 response\n\nRun requests in order 1 → 5.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Create Room (Person A)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Status is 2xx\", function () {",
+              "  pm.expect(pm.response.code).to.be.within(200, 299);",
+              "});",
+              "",
+              "let json = {};",
+              "try { json = pm.response.json(); } catch (e) {}",
+              "",
+              "if (json.invite_code) pm.collectionVariables.set(\"invite_code\", json.invite_code);",
+              "if (json.dispute_id) pm.collectionVariables.set(\"dispute_id\", json.dispute_id);",
+              "",
+              "pm.test(\"invite_code present\", () => pm.expect(json).to.have.property(\"invite_code\"));",
+              "pm.test(\"dispute_id present\", () => pm.expect(json).to.have.property(\"dispute_id\"));"
+            ],
+            "id": "026d591d-e0ac-442d-9e8e-61317a819945"
+          }
+        }
+      ],
+      "id": "0edf7042-567a-4e60-a180-a2f119c97545",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token_a}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": ""
+        },
+        "url": {
+          "raw": "{{base_url}}/small-dispute/create",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "small-dispute",
+            "create"
+          ]
+        },
+        "description": "Person A creates a dispute room. No request body needed — auth token identifies the creator.\n\nExpected response:\n{\n  \"message\": \"Room created\",\n  \"invite_code\": \"A1B2C3\",\n  \"dispute_id\": \"64abc...\"\n}\n\nCopy invite_code and dispute_id into your collection variables before continuing."
+      },
+      "response": []
+    },
+    {
+      "name": "2. Join Room (Person B)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Status is 2xx\", function () {",
+              "  pm.expect(pm.response.code).to.be.within(200, 299);",
+              "});",
+              "",
+              "let json = {};",
+              "try { json = pm.response.json(); } catch (e) {}",
+              "",
+              "if (json.dispute_id) pm.collectionVariables.set(\"dispute_id\", json.dispute_id);"
+            ],
+            "id": "b952beed-a1f7-4252-bc71-1dc728de4932"
+          }
+        }
+      ],
+      "id": "4372c8a1-4729-490a-a1c9-f3c946f8ef2d",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token_b}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"invite_code\": \"{{invite_code}}\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/small-dispute/join",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "small-dispute",
+            "join"
+          ]
+        },
+        "description": "Person B joins using the invite code from Step 1.\n\nExpected response:\n{\n  \"message\": \"Joined successfully\",\n  \"dispute_id\": \"64abc...\"\n}\n\nSocket event emitted to the room: 'user_joined'\n{\n  \"message\": \"Opponent has joined!\"\n}\n\nEdge cases:\n- Same user as creator → 400 'Cannot join your own room'\n- Wrong/expired code → 404 'Invalid code'"
+      },
+      "response": []
+    },
+    {
+      "name": "3. Start Recording (Person A only)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Status is 2xx\", function () {",
+              "  pm.expect(pm.response.code).to.be.within(200, 299);",
+              "});"
+            ],
+            "id": "7cef4b9d-a5a5-49b9-83c4-fa37ec44cbfa"
+          }
+        }
+      ],
+      "id": "a2b66a21-f478-4dab-903d-0521ebd003b5",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token_a}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"dispute_id\": \"{{dispute_id}}\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/small-dispute/start",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "small-dispute",
+            "start"
+          ]
+        },
+        "description": "Only the creator (Person A) can call this. Both users must be in the room first.\n\nExpected response:\n{\n  \"message\": \"Session started\",\n  \"status\": \"RECORDING\"\n}\n\nSocket event emitted to both users: 'timer_start'\n{\n  \"duration\": 30\n}\n\nBoth users now have 30 seconds to record their audio argument.\n\nEdge cases:\n- Person B calls this → 403 'Only Creator can start'\n- Joiner not present yet → 400 'Wait for opponent'"
+      },
+      "response": []
+    },
+    {
+      "name": "4a. Submit Audio — Person A",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Status is 2xx\", function () {",
+              "  pm.expect(pm.response.code).to.be.within(200, 299);",
+              "});"
+            ],
+            "id": "e86ea6a5-9f1a-43cf-9aba-dd156d55c2e5"
+          }
+        }
+      ],
+      "id": "76c53b3c-a15f-4a65-8951-a9b1e7027f08",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token_a}}"
+          }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "dispute_id",
+              "value": "{{dispute_id}}",
+              "type": "text"
+            },
+            {
+              "key": "audio",
+              "description": "Select any .mp3 or .webm audio file from your machine",
+              "type": "file",
+              "src": "/path/to/your/audio_a.mp3"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/small-dispute/submit",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "small-dispute",
+            "submit"
+          ]
+        },
+        "description": "Person A submits their recorded audio argument.\n\nIMPORTANT: This is multipart/form-data NOT JSON. Set the body to form-data with:\n- dispute_id (text field)\n- audio (file field — attach an actual audio file)\n\nExpected response if Person B hasn't submitted yet:\n{\n  \"message\": \"Waiting for opponent\"\n}\n\nSocket event emitted: 'status_update'\n{\n  \"message\": \"One user submitted.\"\n}"
+      },
+      "response": []
+    },
+    {
+      "name": "4b. Submit Audio — Person B (Triggers Verdict)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Status is 2xx\", function () {",
+              "  pm.expect(pm.response.code).to.be.within(200, 299);",
+              "});"
+            ],
+            "id": "2268d7e3-ab63-4069-91cb-226230087bea"
+          }
+        }
+      ],
+      "id": "085b8fa1-115f-4f79-8135-517bda8342b5",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token_b}}"
+          }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "dispute_id",
+              "value": "{{dispute_id}}",
+              "type": "text"
+            },
+            {
+              "key": "audio",
+              "description": "Select any .mp3 or .webm audio file from your machine",
+              "type": "file",
+              "src": "/path/to/your/audio_b.mp3"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/small-dispute/submit",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "small-dispute",
+            "submit"
+          ]
+        },
+        "description": "Person B submits their audio. Since both audios are now present, this triggers the AI Judge.\n\nWhat happens internally:\n1. Both audio files are read and sent to Gemini as inline base64\n2. AI returns a verdict JSON\n3. Dispute status set to COMPLETED\n4. Verdict saved to dispute.result\n\nExpected HTTP response:\n{\n  \"message\": \"Verdict broadcasted\"\n}\n\nSocket events emitted in sequence:\n\n'processing_start'\n{\n  \"message\": \"Judge is analyzing...\"\n}\n\n'verdict_ready'\n{\n  \"status\": \"COMPLETED\",\n  \"result\": {\n    \"verdict\": \"The Creator is correct because...\",\n    \"conclusion\": \"A neutral summary.\",\n    \"logic_score\": { \"creator\": 85, \"joiner\": 60 },\n    \"emotional_intelligence\": { \"creator\": 40, \"joiner\": 90 },\n    \"fact_accuracy\": { \"creator\": 80, \"joiner\": 50 }\n  }\n}\n\nNote: The verdict is delivered via socket. The HTTP response just confirms it was triggered."
+      },
+      "response": []
+    },
+    {
+      "name": "5. Get Dispute Details",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Status is 2xx\", function () {",
+              "  pm.expect(pm.response.code).to.be.within(200, 299);",
+              "});"
+            ],
+            "id": "7ece8dcf-fd88-487f-8a34-2f35b9add0e2"
+          }
+        }
+      ],
+      "id": "c898bc07-d5e1-4cbd-8f97-1210e56660f3",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token_a}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/small-dispute/{{dispute_id}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "small-dispute",
+            "{{dispute_id}}"
+          ]
+        },
+        "description": "Fetch full dispute details at any point in the flow. Useful for:\n- Loading screen while waiting for opponent\n- Checking current status\n- Reading the final result after COMPLETED\n\nExpected response (after COMPLETED):\n{\n  \"_id\": \"64abc...\",\n  \"creator_id\": { \"_id\": \"...\", \"firstName\": \"John\", ... },\n  \"joiner_id\": { \"_id\": \"...\", \"firstName\": \"Jane\", ... },\n  \"invite_code\": \"A1B2C3\",\n  \"status\": \"COMPLETED\",\n  \"result\": {\n    \"verdict\": \"...\",\n    \"conclusion\": \"...\",\n    \"logic_score\": { \"creator\": 85, \"joiner\": 60 },\n    \"emotional_intelligence\": { \"creator\": 40, \"joiner\": 90 },\n    \"fact_accuracy\": { \"creator\": 80, \"joiner\": 50 }\n  }\n}"
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "id": "00a1b59f-7426-43e8-8813-8c4417d9a120",
+      "key": "base_url",
+      "value": "http://localhost:5001/api"
+    },
+    {
+      "id": "db30c03e-8285-4aa5-9bfb-f01b096ba521",
+      "key": "token_a",
+      "value": "PASTE_CREATOR_JWT_HERE"
+    },
+    {
+      "id": "f6edef3b-8d0b-419a-8b31-091b179bb13e",
+      "key": "token_b",
+      "value": "PASTE_JOINER_JWT_HERE"
+    },
+    {
+      "id": "5ba1091a-9ec1-4d09-9179-a3351ace4007",
+      "key": "dispute_id",
+      "value": ""
+    },
+    {
+      "id": "4404b8b9-6afd-4d04-822b-3911286dc817",
+      "key": "invite_code",
+      "value": ""
+    }
+  ]
+}
