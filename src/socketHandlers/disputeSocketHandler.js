@@ -63,9 +63,7 @@ export const setupDisputeSocket = (io) => {
       });
     };
 
-    // ============================================
     // JOIN DISPUTE ROOM
-    // ============================================
     requireAuth("join_dispute", async ({ dispute_id }) => {
       console.log(`Join request: ${dispute_id} from ${socket.user.email}`);
 
@@ -112,9 +110,7 @@ export const setupDisputeSocket = (io) => {
       });
     });
 
-    // ============================================
     // SEND TEXT MESSAGE
-    // ============================================
     requireAuth("send_message", async ({ dispute_id, text_content }, callback) => {
       console.log(`Message from ${socket.user.email}: "${text_content?.substring(0, 30)}..."`);
 
@@ -192,9 +188,7 @@ export const setupDisputeSocket = (io) => {
       }
     });
 
-    // ============================================
     // SEND AUDIO MESSAGE
-    // ============================================
     requireAuth("send_audio", async ({ dispute_id, audio_data, duration }, callback) => {
       console.log(`Audio from ${socket.user.email}: ${duration}s`);
 
@@ -298,9 +292,7 @@ export const setupDisputeSocket = (io) => {
       }
     });
 
-    // ============================================
     // TYPING INDICATORS
-    // ============================================
     requireAuth("typing", ({ dispute_id }) => {
       socket.to(dispute_id).emit("user_typing", {
         user_id: socket.userId,
@@ -318,9 +310,7 @@ export const setupDisputeSocket = (io) => {
       });
     });
 
-    // ============================================
-    // MESSAGE STATUS UPDATES (WhatsApp-like)
-    // ============================================
+    // MESSAGE STATUS UPDATES
     requireAuth("message_delivered", async ({ message_id, dispute_id }) => {
       await DisputeMessage.findByIdAndUpdate(message_id, {
         status: "delivered",
@@ -347,9 +337,7 @@ export const setupDisputeSocket = (io) => {
       });
     });
 
-    // ============================================
     // AUDIO RECORDING INDICATORS
-    // ============================================
     requireAuth("audio_recording_start", ({ dispute_id }) => {
       socket.to(dispute_id).emit("user_recording_audio", {
         user_id: socket.userId,
@@ -367,9 +355,7 @@ export const setupDisputeSocket = (io) => {
       });
     });
 
-    // ============================================
     // LEAVE DISPUTE ROOM
-    // ============================================
     requireAuth("leave_dispute", ({ dispute_id }) => {
       socket.leave(dispute_id);
       socket.to(dispute_id).emit("user_left", {
@@ -383,9 +369,7 @@ export const setupDisputeSocket = (io) => {
       console.log(`${socket.user.email} left dispute`);
     });
 
-    // ============================================
     // DISCONNECT
-    // ============================================
     socket.on("disconnect", (reason) => {
       console.log(`\nDISCONNECT: ${socket.id} - Reason: ${reason}\n`);
       if (socket.currentDispute && socket.authenticated) {
