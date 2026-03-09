@@ -30,7 +30,7 @@ const generateAnalysis = async (audioFiles, conversationType, objective) => {
   for (const file of audioFiles) {
     // Read file from disk
     if (fs.existsSync(file.file_path)) {
-      const base64Data = fs.readFileSync(file.file_path).toString("base64");
+      const base64Data = (await fs.promises.readFile(file.file_path)).toString("base64");
       parts.push({
         inlineData: {
           mimeType: getMimeType(file.original_name),

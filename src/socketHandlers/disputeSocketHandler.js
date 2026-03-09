@@ -2,6 +2,13 @@ import OfficialDispute from "../models/OfficialDispute.js";
 import DisputeMessage from "../models/DisputeMessage.js";
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 
 export const setupDisputeSocket = (io) => {
   console.log("Setting up FULL WebSocket dispute handlers...");
@@ -183,10 +190,10 @@ export const setupDisputeSocket = (io) => {
 
       } catch (error) {
         console.error("Send message error:", error);
-        const errorResponse = { 
-          success: false, 
+        const errorResponse = {
+          success: false,
           message: "Failed to send message",
-          error: error.message 
+          error: error.message
         };
         if (callback) callback(errorResponse);
         socket.emit("message_error", errorResponse);
@@ -230,24 +237,43 @@ export const setupDisputeSocket = (io) => {
         const currentCount = dispute.conversation.audio_count[senderRole] || 0;
 
         if (currentCount >= 5) {
-          const error = { 
-            success: false, 
-            message: `Maximum 5 audio messages allowed. You've reached the limit.` 
+          const error = {
+            success: false,
+            message: `Maximum 5 audio messages allowed. You've reached the limit.`
           };
           if (callback) callback(error);
           return;
         }
 
-        // Save audio (for full WebSocket, you'd save base64 or use a file service)
+        // Save audio to disk
+        const uploadsDir = path.join(__dirname, "../../uploads");
+        if (!fs.existsSync(uploadsDir)) {
+          fs.mkdirSync(uploadsDir, { recursive: true });
+        }
+
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        const filename = `audio-${uniqueSuffix}.webm`;
+        const filePath = path.join(uploadsDir, filename);
+
+        // Decode base64
+        let base64Data = audio_data;
+        if (base64Data.includes("base64,")) {
+          base64Data = base64Data.split("base64,")[1];
+        }
+
+        fs.writeFileSync(filePath, Buffer.from(base64Data, 'base64'));
+
         const message = await DisputeMessage.create({
           dispute_id,
           sender_id: socket.userId,
           sender_role: senderRole,
           message_type: "audio",
           audio_data: {
-            data: audio_data, // Base64 or buffer
-            duration: duration || 30,
-            mimetype: "audio/webm"
+            file_path: filePath,
+            original_name: "voice_message.webm",
+            mimetype: "audio/webm",
+            size: Buffer.from(base64Data, 'base64').length,
+            duration: duration || 30
           },
           status: "sent"
         });
@@ -282,10 +308,10 @@ export const setupDisputeSocket = (io) => {
       } catch (error) {
         console.error("Send audio error:", error);
         if (callback) {
-          callback({ 
-            success: false, 
+          callback({
+            success: false,
             message: "Failed to send audio",
-            error: error.message 
+            error: error.message
           });
         }
       }
@@ -374,10 +400,10 @@ export const setupDisputeSocket = (io) => {
         await dispute.save();
 
         if (callback) {
-          callback({ 
-            success: true, 
+          callback({
+            success: true,
             message: "Conversation ended",
-            status: "AI_SUMMARIZING" 
+            status: "AI_SUMMARIZING"
           });
         }
 
@@ -394,10 +420,10 @@ export const setupDisputeSocket = (io) => {
       } catch (error) {
         console.error("End conversation error:", error);
         if (callback) {
-          callback({ 
-            success: false, 
+          callback({
+            success: false,
             message: "Failed to end conversation",
-            error: error.message 
+            error: error.message
           });
         }
       }
