@@ -149,6 +149,7 @@ export const createDispute = async (req, res) => {
 
   } catch (err) {
     console.error("Create dispute error:", err);
+    console.error("Create dispute error:", err);
     res.status(500).json({ message: "Failed to create dispute", error: err.message });
   }
 };
@@ -197,6 +198,7 @@ export const joinDispute = async (req, res) => {
         joiner_name: `${req.user.firstName} ${req.user.lastName}`,
         status: "CONVERSATION",
         dispute_name: dispute.dispute_name,
+        dispute_name: dispute.dispute_name,
         message: "Other party has joined. You can start the conversation.",
         timestamp: new Date()
       });
@@ -211,6 +213,7 @@ export const joinDispute = async (req, res) => {
     });
 
   } catch (err) {
+    console.error("Join dispute error:", err);
     console.error("Join dispute error:", err);
     res.status(500).json({ message: "Failed to join dispute", error: err.message });
   }
@@ -336,6 +339,7 @@ export const getAudioFile = async (req, res) => {
 
   } catch (err) {
     console.error("Get audio error:", err);
+    console.error("Get audio error:", err);
     res.status(500).json({ message: "Failed to get audio file" });
   }
 };
@@ -370,10 +374,12 @@ export const getConversationMessages = async (req, res) => {
       count: messages.length,
       audio_count: dispute.conversation.audio_count,
       messages: messages.reverse(),
+      messages: messages.reverse(),
       has_more: messages.length === parseInt(limit)
     });
 
   } catch (err) {
+    console.error("Fetch messages error:", err);
     console.error("Fetch messages error:", err);
     res.status(500).json({ message: "Failed to fetch messages", error: err.message });
   }
@@ -434,6 +440,7 @@ export const endConversation = async (req, res) => {
     });
 
   } catch (err) {
+    console.error("End conversation error:", err);
     console.error("End conversation error:", err);
     res.status(500).json({ message: "Failed to end conversation", error: err.message });
   }
@@ -510,6 +517,7 @@ OUTPUT JSON:
     }
 
   } catch (error) {
+    console.error("Summary generation failed:", error);
     console.error("Summary generation failed:", error);
     dispute.status = "CONVERSATION";
     await dispute.save();
@@ -785,7 +793,7 @@ OUTPUT JSON:
     await dispute.save();
     throw error;
   }
-}
+};
 
 // ENDPOINT: SELECT SOLUTIONS
 // After both select, move to NEGOTIATION phase instead of auto-completing
@@ -793,14 +801,18 @@ export const selectSolutions = async (req, res) => {
   try {
     const { dispute_id, selected_solution_ids } = req.body;
 
+    // 1. Validation (Your Code)
     if (!Array.isArray(selected_solution_ids) || selected_solution_ids.length === 0) {
+      return res.status(400).json({ message: "Please select at least one solution" });
       return res.status(400).json({ message: "Please select at least one solution" });
     }
 
     const dispute = await OfficialDispute.findById(dispute_id);
     if (!dispute) return res.status(404).json({ message: "Dispute not found" });
+    if (!dispute) return res.status(404).json({ message: "Dispute not found" });
 
     if (dispute.status !== "OPTIONS_SELECTION") {
+      return res.status(400).json({ message: "Not in solution selection phase" });
       return res.status(400).json({ message: "Not in solution selection phase" });
     }
 
@@ -809,11 +821,13 @@ export const selectSolutions = async (req, res) => {
 
     if (!isCreator && !isJoiner) {
       return res.status(403).json({ message: "You are not authorized to select solutions" });
+      return res.status(403).json({ message: "You are not authorized to select solutions" });
     }
 
     const validSolutionIds = dispute.solutions.map(s => s.id);
     const invalidSelections = selected_solution_ids.filter(id => !validSolutionIds.includes(id));
     if (invalidSelections.length > 0) {
+      return res.status(400).json({ message: `Invalid solution IDs: ${invalidSelections.join(', ')}` });
       return res.status(400).json({ message: `Invalid solution IDs: ${invalidSelections.join(', ')}` });
     }
 
@@ -830,6 +844,7 @@ export const selectSolutions = async (req, res) => {
       dispute.status = "NEGOTIATION";
       await dispute.save();
 
+      // Notify Socket
       if (req.io) {
         req.io.to(dispute_id).emit("negotiation_started", {
           status: "NEGOTIATION",
@@ -855,6 +870,8 @@ export const selectSolutions = async (req, res) => {
         message: "Selection recorded. Waiting for other party.",
         has_creator_selected: creatorVotes.length > 0,
         has_joiner_selected: joinerVotes.length > 0,
+        has_creator_selected: creatorVotes.length > 0,
+        has_joiner_selected: joinerVotes.length > 0,
         timestamp: new Date()
       });
     }
@@ -867,6 +884,7 @@ export const selectSolutions = async (req, res) => {
     });
 
   } catch (err) {
+    console.error("Select solutions error:", err);
     console.error("Select solutions error:", err);
     res.status(500).json({ message: "Failed to select solutions", error: err.message });
   }
