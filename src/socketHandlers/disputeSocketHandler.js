@@ -2,6 +2,13 @@ import OfficialDispute from "../models/OfficialDispute.js";
 import DisputeMessage from "../models/DisputeMessage.js";
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 
 export const setupDisputeSocket = (io) => {
   console.log("Setting up FULL WebSocket dispute handlers...");
@@ -274,10 +281,10 @@ export const setupDisputeSocket = (io) => {
         await dispute.save();
 
         if (callback) {
-          callback({ 
-            success: true, 
+          callback({
+            success: true,
             message: "Conversation ended",
-            status: "AI_SUMMARIZING" 
+            status: "AI_SUMMARIZING"
           });
         }
 
@@ -294,10 +301,10 @@ export const setupDisputeSocket = (io) => {
       } catch (error) {
         console.error("End conversation error:", error);
         if (callback) {
-          callback({ 
-            success: false, 
+          callback({
+            success: false,
             message: "Failed to end conversation",
-            error: error.message 
+            error: error.message
           });
         }
       }
