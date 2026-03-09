@@ -41,7 +41,7 @@ export const setupDisputeSocket = (io) => {
   io.on("connection", (socket) => {
     console.log(`\nNEW CONNECTION: ${socket.id} (Auth: ${socket.authenticated})\n`);
 
-    // Helper function to require authentication
+    // Helper to require authentication before handling any event
     const requireAuth = (eventName, handler) => {
       socket.on(eventName, async (...args) => {
         if (!socket.authenticated) {
@@ -68,6 +68,7 @@ export const setupDisputeSocket = (io) => {
     // ============================================
     requireAuth("join_dispute", async ({ dispute_id }) => {
       console.log(`Join request: ${dispute_id} from ${socket.user.email}`);
+
       const dispute = await OfficialDispute.findById(dispute_id)
         .populate('creator_id', 'firstName lastName email')
         .populate('joiner_id', 'firstName lastName email');
@@ -91,6 +92,7 @@ export const setupDisputeSocket = (io) => {
 
       console.log(`${socket.user.email} joined room ${dispute_id} as ${socket.userRole}`);
 
+      // Send full dispute state to the user who just joined
       socket.emit("dispute_state", {
         dispute,
         user_role: socket.userRole,
@@ -101,6 +103,7 @@ export const setupDisputeSocket = (io) => {
         timestamp: new Date()
       });
 
+      // Notify the other party
       socket.to(dispute_id).emit("user_online", {
         user_id: socket.userId,
         user_role: socket.userRole,
@@ -109,12 +112,13 @@ export const setupDisputeSocket = (io) => {
       });
     });
 
-    // SEND TEXT MESSAGE - 100% WEBSOCKET
+    // ============================================
+    // SEND TEXT MESSAGE
+    // ============================================
     requireAuth("send_message", async ({ dispute_id, text_content }, callback) => {
       console.log(`Message from ${socket.user.email}: "${text_content?.substring(0, 30)}..."`);
 
       try {
-        // Validate
         if (!text_content?.trim()) {
           const error = { success: false, message: "Message cannot be empty" };
           if (callback) callback(error);
@@ -122,7 +126,6 @@ export const setupDisputeSocket = (io) => {
           return;
         }
 
-        // Check dispute
         const dispute = await OfficialDispute.findById(dispute_id);
         if (!dispute) {
           const error = { success: false, message: "Dispute not found" };
@@ -138,7 +141,6 @@ export const setupDisputeSocket = (io) => {
           return;
         }
 
-        // Check authorization
         const isCreator = dispute.creator_id.toString() === socket.userId;
         const isJoiner = dispute.joiner_id?.toString() === socket.userId;
 
@@ -151,7 +153,6 @@ export const setupDisputeSocket = (io) => {
 
         const senderRole = isCreator ? "creator" : "joiner";
 
-        // Save to database
         const message = await DisputeMessage.create({
           dispute_id,
           sender_id: socket.userId,
@@ -161,25 +162,16 @@ export const setupDisputeSocket = (io) => {
           status: "sent"
         });
 
-        // Update dispute
         dispute.conversation.messages.push(message._id);
         await dispute.save();
 
-        // Populate sender info
         await message.populate('sender_id', 'firstName lastName email');
 
         console.log(`Message saved: ${message._id}`);
 
-        // Send acknowledgment to sender (callback)
-        if (callback) {
-          callback({
-            success: true,
-            message: message,
-            timestamp: new Date()
-          });
-        }
+        if (callback) callback({ success: true, message, timestamp: new Date() });
 
-        // Broadcast to ENTIRE room (including sender for consistency)
+        // Broadcast to entire room including sender for UI consistency
         io.to(dispute_id).emit("new_message", {
           message,
           sender_role: senderRole,
@@ -200,7 +192,9 @@ export const setupDisputeSocket = (io) => {
       }
     });
 
-    // SEND AUDIO MESSAGE - 100% WEBSOCKET
+    // ============================================
+    // SEND AUDIO MESSAGE
+    // ============================================
     requireAuth("send_audio", async ({ dispute_id, audio_data, duration }, callback) => {
       console.log(`Audio from ${socket.user.email}: ${duration}s`);
 
@@ -239,7 +233,7 @@ export const setupDisputeSocket = (io) => {
         if (currentCount >= 5) {
           const error = {
             success: false,
-            message: `Maximum 5 audio messages allowed. You've reached the limit.`
+            message: "Maximum 5 audio messages allowed. You've reached the limit."
           };
           if (callback) callback(error);
           return;
@@ -247,19 +241,14 @@ export const setupDisputeSocket = (io) => {
 
         // Save audio to disk
         const uploadsDir = path.join(__dirname, "../../uploads");
-        if (!fs.existsSync(uploadsDir)) {
-          fs.mkdirSync(uploadsDir, { recursive: true });
-        }
+        if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
         const filename = `audio-${uniqueSuffix}.webm`;
         const filePath = path.join(uploadsDir, filename);
 
-        // Decode base64
         let base64Data = audio_data;
-        if (base64Data.includes("base64,")) {
-          base64Data = base64Data.split("base64,")[1];
-        }
+        if (base64Data.includes("base64,")) base64Data = base64Data.split("base64,")[1];
 
         fs.writeFileSync(filePath, Buffer.from(base64Data, 'base64'));
 
@@ -284,17 +273,15 @@ export const setupDisputeSocket = (io) => {
 
         await message.populate('sender_id', 'firstName lastName email');
 
-        // Acknowledge to sender
         if (callback) {
           callback({
             success: true,
-            message: message,
+            message,
             remaining_audios: 5 - dispute.conversation.audio_count[senderRole],
             timestamp: new Date()
           });
         }
 
-        // Broadcast to room
         io.to(dispute_id).emit("new_message", {
           message,
           sender_role: senderRole,
@@ -307,17 +294,13 @@ export const setupDisputeSocket = (io) => {
 
       } catch (error) {
         console.error("Send audio error:", error);
-        if (callback) {
-          callback({
-            success: false,
-            message: "Failed to send audio",
-            error: error.message
-          });
-        }
+        if (callback) callback({ success: false, message: "Failed to send audio", error: error.message });
       }
     });
 
+    // ============================================
     // TYPING INDICATORS
+    // ============================================
     requireAuth("typing", ({ dispute_id }) => {
       socket.to(dispute_id).emit("user_typing", {
         user_id: socket.userId,
@@ -335,7 +318,9 @@ export const setupDisputeSocket = (io) => {
       });
     });
 
+    // ============================================
     // MESSAGE STATUS UPDATES (WhatsApp-like)
+    // ============================================
     requireAuth("message_delivered", async ({ message_id, dispute_id }) => {
       await DisputeMessage.findByIdAndUpdate(message_id, {
         status: "delivered",
@@ -362,7 +347,9 @@ export const setupDisputeSocket = (io) => {
       });
     });
 
+    // ============================================
     // AUDIO RECORDING INDICATORS
+    // ============================================
     requireAuth("audio_recording_start", ({ dispute_id }) => {
       socket.to(dispute_id).emit("user_recording_audio", {
         user_id: socket.userId,
@@ -380,56 +367,9 @@ export const setupDisputeSocket = (io) => {
       });
     });
 
-    // END CONVERSATION
-    requireAuth("end_conversation", async ({ dispute_id }, callback) => {
-      try {
-        const dispute = await OfficialDispute.findById(dispute_id);
-        if (!dispute) {
-          if (callback) callback({ success: false, message: "Dispute not found" });
-          return;
-        }
-
-        if (dispute.status !== "CONVERSATION") {
-          if (callback) callback({ success: false, message: "Conversation already ended" });
-          return;
-        }
-
-        dispute.conversation.ended_by = socket.userId;
-        dispute.conversation.ended_at = new Date();
-        dispute.status = "AI_SUMMARIZING";
-        await dispute.save();
-
-        if (callback) {
-          callback({
-            success: true,
-            message: "Conversation ended",
-            status: "AI_SUMMARIZING"
-          });
-        }
-
-        io.to(dispute_id).emit("conversation_ended", {
-          ended_by: socket.userId,
-          ended_by_role: socket.userRole,
-          status: "AI_SUMMARIZING",
-          message: "Conversation ended. AI is generating summary...",
-          timestamp: new Date()
-        });
-
-        console.log(`Conversation ended by ${socket.userRole}`);
-
-      } catch (error) {
-        console.error("End conversation error:", error);
-        if (callback) {
-          callback({
-            success: false,
-            message: "Failed to end conversation",
-            error: error.message
-          });
-        }
-      }
-    });
-
-    // LEAVE DISPUTE
+    // ============================================
+    // LEAVE DISPUTE ROOM
+    // ============================================
     requireAuth("leave_dispute", ({ dispute_id }) => {
       socket.leave(dispute_id);
       socket.to(dispute_id).emit("user_left", {
@@ -440,10 +380,12 @@ export const setupDisputeSocket = (io) => {
       });
       socket.currentDispute = null;
       socket.userRole = null;
-      console.log(`👋 ${socket.user.email} left dispute`);
+      console.log(`${socket.user.email} left dispute`);
     });
 
+    // ============================================
     // DISCONNECT
+    // ============================================
     socket.on("disconnect", (reason) => {
       console.log(`\nDISCONNECT: ${socket.id} - Reason: ${reason}\n`);
       if (socket.currentDispute && socket.authenticated) {
@@ -451,7 +393,7 @@ export const setupDisputeSocket = (io) => {
           user_id: socket.userId,
           user_role: socket.userRole,
           user_name: socket.user ? `${socket.user.firstName} ${socket.user.lastName}` : "Unknown",
-          reason: reason,
+          reason,
           timestamp: new Date()
         });
       }
