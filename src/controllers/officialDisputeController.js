@@ -1417,3 +1417,41 @@ export const deleteDispute = async (req, res) => {
     res.status(500).json({ message: "Failed to delete dispute", error: err.message });
   }
 };
+
+// ENDPOINT: GET AI SUMMARY
+export const getAISummary = async (req, res) => {
+  try {
+    const { dispute_id } = req.body;
+
+    if (!dispute_id) {
+      return res.status(400).json({ message: "dispute_id is required" });
+    }
+
+    const dispute = await OfficialDispute.findById(dispute_id);
+    if (!dispute) {
+      return res.status(404).json({ message: "Dispute not found" });
+    }
+
+    const isParticipant =
+      dispute.creator_id.toString() === req.user._id.toString() ||
+      dispute.joiner_id?.toString() === req.user._id.toString();
+
+    if (!isParticipant) {
+      return res.status(403).json({ message: "You are not authorized to view this dispute" });
+    }
+
+    if (!dispute.ai_summary || !dispute.ai_summary.summary_text) {
+      return res.status(404).json({ message: "No summary available for this dispute" });
+    }
+
+    res.json({
+      success: true,
+      data: dispute.ai_summary,
+      timestamp: new Date()
+    });
+
+  } catch (err) {
+    console.error("Get summary error:", err);
+    res.status(500).json({ message: "Failed to retrieve summary", error: err.message });
+  }
+};

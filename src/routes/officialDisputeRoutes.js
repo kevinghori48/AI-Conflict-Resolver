@@ -47,4 +47,7 @@ router.get("/status/:dispute_id", auth, controller.getDisputeStatus);
 router.get("/my-disputes", auth, controller.getUserDisputes);
 router.delete("/delete/:dispute_id", auth, controller.deleteDispute);
 
+// AI SUMMARY ENDPOINT
+router.post("/summary/get", auth, controller.getAISummary);
+
 export default router;
