@@ -448,6 +448,18 @@
             "description": "Approve summary (Switch to User 2's token!)"
           },
           "response": []
+        },
+        {
+          "name": "New Request",
+          "id": "43a3e6eb-209c-49ea-84b3-22373c26b096",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": ""
+            }
+          },
+          "response": []
         }
       ],
       "id": "0bf7f7bf-c099-43c4-84d6-232ea6c2b9c7"
@@ -640,42 +652,42 @@
   },
   "variable": [
     {
-      "id": "493447c0-aea4-4f4f-ae39-f7ecb7a61749",
+      "id": "18945983-b3a0-45e5-b255-8af13cd30b32",
       "key": "baseUrl",
       "value": "http://localhost:5001",
       "type": "string"
     },
     {
-      "id": "2d712f8a-7b55-432f-bbde-f40b2e28b803",
+      "id": "d9b62ad7-f8db-4f8a-a707-c4adaae8574a",
       "key": "authToken",
       "value": "",
       "type": "string"
     },
     {
-      "id": "8ff19768-ad23-4f6f-845b-2ebdf199bc81",
+      "id": "8c82b8a2-c1c3-4fdf-9a21-1246016eb4fe",
       "key": "userId",
       "value": "",
       "type": "string"
     },
     {
-      "id": "3a75a803-8c12-41b6-b815-ab44fa82802c",
+      "id": "59c60c1f-d048-4247-82d1-cbb2de2e0e53",
       "key": "disputeId",
       "value": "",
       "type": "string"
     },
     {
-      "id": "9eab44f2-4291-4428-999f-dc6abc78e863",
+      "id": "905ce38c-1d7c-42e6-b72b-b79a00293b95",
       "key": "inviteCode",
       "value": "",
       "type": "string"
     },
     {
-      "id": "9c6c4426-0903-40f6-bbb4-8ccc076397e6",
+      "id": "acbb4064-9e06-4d9a-9d7f-c0bd6d6bace8",
       "key": "token_a",
       "value": ""
     },
     {
-      "id": "2fd52830-1212-48ec-bcd7-3d76ae6f04b3",
+      "id": "34cdb2e4-3f82-44f8-9fb0-361168f43ffa",
       "key": "token_b",
       "value": ""
     }

@@ -419,13 +419,22 @@ export const endConversation = async (req, res) => {
       });
     }
 
+    // store dispute_id as string before setTimeout
+    const disputeIdString = dispute._id.toString();
+
     setTimeout(async () => {
       try {
-        await generateAISummary(dispute, req.io);
+        // always refetch fresh from DB
+        const freshDispute = await OfficialDispute.findById(disputeIdString);
+        if (!freshDispute) {
+          console.error("Dispute not found during summary generation");
+          return;
+        }
+        await generateAISummary(freshDispute, req.io);
       } catch (error) {
         console.error("Summary generation failed:", error);
         if (req.io) {
-          req.io.to(dispute_id).emit("summary_generation_failed", {
+          req.io.to(disputeIdString).emit("summary_generation_failed", {
             message: "Failed to generate summary. Please try again.",
             error: error.message
           });
@@ -449,11 +458,26 @@ export const endConversation = async (req, res) => {
 // HELPER: GENERATE AI SUMMARY
 async function generateAISummary(dispute, io) {
   try {
-    const messages = await DisputeMessage.find({ dispute_id: dispute._id })
+    // add this temporarily at the top of generateAISummary
+    const allMessages = await DisputeMessage.find({});
+    console.log("Total messages in DB:", allMessages.length);
+    console.log("Dispute ID we're searching:", dispute._id.toString());
+    console.log("Sample message dispute_ids:", allMessages.slice(0,3).map(m => m.dispute_id?.toString()));
+
+    console.log("Fetching messages for dispute:", dispute._id.toString());
+    
+    const messages = await DisputeMessage.find({ 
+      dispute_id: dispute._id.toString()  // force string comparison
+    })
       .populate('sender_id', 'firstName lastName email')
       .sort({ timestamp: 1 });
 
-    if (messages.length === 0) throw new Error("No messages to summarize");
+    console.log(`Found ${messages.length} messages`);  // add this log
+
+    if (messages.length === 0) {
+      // don't throw — generate summary from intake data instead
+      console.log("No messages found, generating from context only");
+    }
 
     let transcript = "";
     for (const msg of messages) {
