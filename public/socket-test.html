@@ -674,6 +674,54 @@
                 input.placeholder = 'Conversation ended';
             });
 
+            // Add missing event listeners for dispute flow
+            socket.on('joiner_connected', (data) => {
+                addSystemMessage(`👋 ${data.joiner_name} has joined the dispute`);
+            });
+
+            socket.on('summary_ready', (data) => {
+                addSystemMessage('📝 AI summary is ready for review');
+                console.log('Summary ready:', data);
+            });
+
+            socket.on('solutions_ready', (data) => {
+                addSystemMessage('💡 Solution options are ready for selection');
+                console.log('Solutions ready:', data);
+            });
+
+            socket.on('final_plan_ready', (data) => {
+                addSystemMessage('📋 Final resolution plan is ready');
+                console.log('Final plan ready:', data);
+            });
+
+            socket.on('summary_regenerating', (data) => {
+                addSystemMessage('🔄 Regenerating AI summary...');
+            });
+
+            socket.on('summary_updated', (data) => {
+                addSystemMessage('📝 Summary has been updated');
+            });
+
+            socket.on('generating_solutions', (data) => {
+                addSystemMessage('🤖 Generating solution options...');
+            });
+
+            socket.on('solution_generation_failed', (data) => {
+                addSystemMessage('❌ Failed to generate solutions');
+            });
+
+            socket.on('generating_final_plan', (data) => {
+                addSystemMessage('🤖 Generating final resolution plan...');
+            });
+
+            socket.on('final_plan_failed', (data) => {
+                addSystemMessage('❌ Failed to generate final plan');
+            });
+
+            socket.on('dispute_completed', (data) => {
+                addSystemMessage('✅ Dispute has been resolved!');
+            });
+
             socket.on('disconnect', () => {
                 updateConnectionStatus(false);
                 addSystemMessage('⚠️ Disconnected from server');

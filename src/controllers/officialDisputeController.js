@@ -149,7 +149,6 @@ export const createDispute = async (req, res) => {
 
   } catch (err) {
     console.error("Create dispute error:", err);
-    console.error("Create dispute error:", err);
     res.status(500).json({ message: "Failed to create dispute", error: err.message });
   }
 };
@@ -193,11 +192,10 @@ export const joinDispute = async (req, res) => {
     await dispute.populate('joiner_id', 'firstName lastName email');
 
     if (req.io) {
-      req.io.to(dispute._id.toString()).emit("joiner_connected", {
+      req.io.to(dispute_id).emit("joiner_connected", {
         joiner_id: req.user._id,
         joiner_name: `${req.user.firstName} ${req.user.lastName}`,
         status: "CONVERSATION",
-        dispute_name: dispute.dispute_name,
         dispute_name: dispute.dispute_name,
         message: "Other party has joined. You can start the conversation.",
         timestamp: new Date()
@@ -214,7 +212,6 @@ export const joinDispute = async (req, res) => {
 
   } catch (err) {
     console.error("Join dispute error:", err);
-    console.error("Join dispute error:", err);
     res.status(500).json({ message: "Failed to join dispute", error: err.message });
   }
 };
@@ -230,12 +227,12 @@ export const sendAudioMessage = async (req, res) => {
 
     const dispute = await OfficialDispute.findById(dispute_id);
     if (!dispute) {
-      fs.unlinkSync(file.path);
+      try { fs.unlinkSync(file.path); } catch (e) { console.error("Failed to cleanup file:", e); }
       return res.status(404).json({ message: "Dispute not found" });
     }
 
     if (dispute.status !== "CONVERSATION") {
-      fs.unlinkSync(file.path);
+      try { fs.unlinkSync(file.path); } catch (e) { console.error("Failed to cleanup file:", e); }
       return res.status(400).json({ message: "Dispute is not in conversation phase" });
     }
 
@@ -243,14 +240,14 @@ export const sendAudioMessage = async (req, res) => {
     const isJoiner = dispute.joiner_id?.toString() === req.user._id.toString();
 
     if (!isCreator && !isJoiner) {
-      fs.unlinkSync(file.path);
+      try { fs.unlinkSync(file.path); } catch (e) { console.error("Failed to cleanup file:", e); }
       return res.status(403).json({ message: "You are not a participant of this dispute" });
     }
 
     const senderRole = isCreator ? "creator" : "joiner";
     const currentCount = dispute.conversation.audio_count[senderRole] || 0;
     if (currentCount >= 5) {
-      fs.unlinkSync(file.path);
+      try { fs.unlinkSync(file.path); } catch (e) { console.error("Failed to cleanup file:", e); }
       return res.status(400).json({
         message: `Maximum 5 audio messages allowed per person. You've reached the limit.`
       });
@@ -296,7 +293,9 @@ export const sendAudioMessage = async (req, res) => {
 
   } catch (err) {
     console.error("Send audio error:", err);
-    if (req.file && req.file.path) fs.unlinkSync(req.file.path);
+    if (req.file && req.file.path) {
+      try { fs.unlinkSync(req.file.path); } catch (e) { console.error("Failed to cleanup file:", e); }
+    }
     res.status(500).json({ message: "Failed to send audio", error: err.message });
   }
 };
@@ -339,7 +338,6 @@ export const getAudioFile = async (req, res) => {
 
   } catch (err) {
     console.error("Get audio error:", err);
-    console.error("Get audio error:", err);
     res.status(500).json({ message: "Failed to get audio file" });
   }
 };
@@ -379,7 +377,6 @@ export const getConversationMessages = async (req, res) => {
     });
 
   } catch (err) {
-    console.error("Fetch messages error:", err);
     console.error("Fetch messages error:", err);
     res.status(500).json({ message: "Failed to fetch messages", error: err.message });
   }
@@ -430,7 +427,7 @@ export const endConversation = async (req, res) => {
           console.error("Dispute not found during summary generation");
           return;
         }
-        await generateAISummary(freshDispute, req.io);
+        await generateAISummary(freshDispute, dispute_id, req.io);
       } catch (error) {
         console.error("Summary generation failed:", error);
         if (req.io) {
@@ -450,20 +447,13 @@ export const endConversation = async (req, res) => {
 
   } catch (err) {
     console.error("End conversation error:", err);
-    console.error("End conversation error:", err);
     res.status(500).json({ message: "Failed to end conversation", error: err.message });
   }
 };
 
 // HELPER: GENERATE AI SUMMARY
-async function generateAISummary(dispute, io) {
+async function generateAISummary(dispute, dispute_id, io) {
   try {
-    // add this temporarily at the top of generateAISummary
-    const allMessages = await DisputeMessage.find({});
-    console.log("Total messages in DB:", allMessages.length);
-    console.log("Dispute ID we're searching:", dispute._id.toString());
-    console.log("Sample message dispute_ids:", allMessages.slice(0,3).map(m => m.dispute_id?.toString()));
-
     console.log("Fetching messages for dispute:", dispute._id.toString());
     
     const messages = await DisputeMessage.find({ 
@@ -532,7 +522,7 @@ OUTPUT JSON:
     await dispute.save();
 
     if (io) {
-      io.to(dispute._id.toString()).emit("summary_ready", {
+      io.to(dispute_id).emit("summary_ready", {
         status: "SUMMARY_REVIEW",
         summary: dispute.ai_summary,
         message: "Summary generated successfully. Please review.",
@@ -541,7 +531,6 @@ OUTPUT JSON:
     }
 
   } catch (error) {
-    console.error("Summary generation failed:", error);
     console.error("Summary generation failed:", error);
     dispute.status = "CONVERSATION";
     await dispute.save();
@@ -700,13 +689,22 @@ export const approveSummary = async (req, res) => {
         });
       }
 
+      // store dispute_id as string before setTimeout
+      const disputeIdString = dispute._id.toString();
+
       setTimeout(async () => {
         try {
-          await generateSolutions(dispute, req.io);
+          // always refetch fresh from DB
+          const freshDispute = await OfficialDispute.findById(disputeIdString);
+          if (!freshDispute) {
+            console.error("Dispute not found during solution generation");
+            return;
+          }
+          await generateSolutions(freshDispute, dispute_id, req.io);
         } catch (error) {
           console.error("Solution generation failed:", error);
           if (req.io) {
-            req.io.to(dispute_id).emit("solution_generation_failed", {
+            req.io.to(disputeIdString).emit("solution_generation_failed", {
               message: "Failed to generate solutions. Please try again.",
               error: error.message
             });
@@ -744,7 +742,7 @@ export const approveSummary = async (req, res) => {
 };
 
 // HELPER: GENERATE SOLUTIONS
-async function generateSolutions(dispute, io) {
+async function generateSolutions(dispute, dispute_id, io) {
   try {
     const prompt = `You are a conflict resolution expert generating solution options.
 
@@ -803,7 +801,7 @@ OUTPUT JSON:
     await dispute.save();
 
     if (io) {
-      io.to(dispute._id.toString()).emit("solutions_ready", {
+      io.to(dispute_id).emit("solutions_ready", {
         status: "OPTIONS_SELECTION",
         solutions: dispute.solutions,
         message: "Solution options generated. Please select your preferred options.",
@@ -894,8 +892,6 @@ export const selectSolutions = async (req, res) => {
         message: "Selection recorded. Waiting for other party.",
         has_creator_selected: creatorVotes.length > 0,
         has_joiner_selected: joinerVotes.length > 0,
-        has_creator_selected: creatorVotes.length > 0,
-        has_joiner_selected: joinerVotes.length > 0,
         timestamp: new Date()
       });
     }
@@ -908,7 +904,6 @@ export const selectSolutions = async (req, res) => {
     });
 
   } catch (err) {
-    console.error("Select solutions error:", err);
     console.error("Select solutions error:", err);
     res.status(500).json({ message: "Failed to select solutions", error: err.message });
   }
@@ -1023,15 +1018,28 @@ export const signalAgreement = async (req, res) => {
         });
       }
 
+      // store dispute_id as string before setTimeout
+      const disputeIdString = dispute._id.toString();
+
       setTimeout(async () => {
         try {
-          await generateFinalPlan(dispute, req.io);
+          // always refetch fresh from DB
+          const freshDispute = await OfficialDispute.findById(disputeIdString);
+          if (!freshDispute) {
+            console.error("Dispute not found during final plan generation");
+            return;
+          }
+          await generateFinalPlan(freshDispute, dispute_id, req.io);
         } catch (error) {
           console.error("Final plan generation failed:", error);
-          dispute.status = "NEGOTIATION";
-          await dispute.save();
+          // refetch and reset status
+          const freshDispute = await OfficialDispute.findById(disputeIdString);
+          if (freshDispute) {
+            freshDispute.status = "NEGOTIATION";
+            await freshDispute.save();
+          }
           if (req.io) {
-            req.io.to(dispute_id).emit("final_plan_failed", {
+            req.io.to(disputeIdString).emit("final_plan_failed", {
               message: "Failed to generate final plan. Please try again.",
               error: error.message
             });
@@ -1102,7 +1110,7 @@ export const getNegotiationComments = async (req, res) => {
 };
 
 // HELPER: GENERATE FINAL PLAN FROM NEGOTIATION
-async function generateFinalPlan(dispute, io) {
+async function generateFinalPlan(dispute, dispute_id, io) {
   try {
     console.log("Generating final plan for dispute:", dispute._id);
 
@@ -1174,7 +1182,7 @@ OUTPUT JSON:
     await dispute.save();
 
     if (io) {
-      io.to(dispute._id.toString()).emit("final_plan_ready", {
+      io.to(dispute_id).emit("final_plan_ready", {
         status: "FINAL_PLAN_REVIEW",
         final_plan: dispute.final_plan,
         message: "Final resolution plan is ready. Please review and approve.",
