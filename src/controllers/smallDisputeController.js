@@ -68,7 +68,7 @@ export const joinDispute = async (req, res) => {
     await smallDispute.save();
 
     // Socket: Notify Creator that Joiner arrived
-    if (req.io) req.io.to(smallDispute._id.toString()).emit("user_joined", { message: "Opponent has joined!" });
+    if (req.io) req.io.to(smallDispute._id).emit("user_joined", { message: "Opponent has joined!" });
 
     res.json({ message: "Joined successfully", dispute_id: smallDispute._id });
   } catch (err) {

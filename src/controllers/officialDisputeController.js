@@ -417,7 +417,7 @@ export const endConversation = async (req, res) => {
     }
 
     // store dispute_id as string before setTimeout
-    const disputeIdString = dispute._id.toString();
+    const disputeIdString = dispute_id;
 
     setTimeout(async () => {
       try {
@@ -690,7 +690,7 @@ export const approveSummary = async (req, res) => {
       }
 
       // store dispute_id as string before setTimeout
-      const disputeIdString = dispute._id.toString();
+      const disputeIdString = dispute_id;
 
       setTimeout(async () => {
         try {
@@ -1019,7 +1019,7 @@ export const signalAgreement = async (req, res) => {
       }
 
       // store dispute_id as string before setTimeout
-      const disputeIdString = dispute._id.toString();
+      const disputeIdString = dispute_id;
 
       setTimeout(async () => {
         try {
