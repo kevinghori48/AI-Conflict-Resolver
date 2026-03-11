@@ -9,7 +9,10 @@ async function callGemini(prompt) {
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
   const model = genAI.getGenerativeModel({
     model: "gemini-2.5-flash",
-    generationConfig: { responseMimeType: "application/json" }
+    generationConfig: {
+      responseMimeType: "application/json",
+      temperature: 0
+     }
   });
   const result = await model.generateContent(prompt);
   return result.response.text();
@@ -19,10 +22,28 @@ const cleanAIResponse = (text) => {
   try {
     return JSON.parse(text);
   } catch (err) {
-    const match = text.match(/\{[\s\S]*\}/);
-    if (match) return JSON.parse(match[0]);
-    console.error("JSON Parse Failed:", text);
-    throw new Error("AI returned invalid JSON format");
+    try {
+      let cleaned = text
+        .replace(/```json/gi, '')
+        .replace(/```/g, '')
+        .trim();
+      return JSON.parse(cleaned);
+    } catch (err2) {
+      try {
+        const match = cleaned.match(/\{[\s\S]*\}/);
+        if (match) return JSON.parse(match[0]);
+      } catch (err3) {
+        const sanitized = text
+          .replace(/```json/gi, '')
+          .replace(/```/g, '')
+          .replace(/[\u0000-\u001F\u007F]/g, ' ')
+          .trim();
+        const match = sanitized.match(/\{[\s\S]*\}/);
+        if (match) return JSON.parse(match[0]);
+      }
+      console.error("JSON Parse Failed:", text);
+      throw new Error("AI returned invalid JSON format");
+    }
   }
 };
 
