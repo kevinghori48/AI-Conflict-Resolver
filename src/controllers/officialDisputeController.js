@@ -408,6 +408,11 @@ export const endConversation = async (req, res) => {
   try {
     const { dispute_id } = req.body;
 
+    console.log(`\nEND CONVERSATION HTTP ENDPOINT TRIGGERED`);
+    console.log(`Dispute ID: ${dispute_id}`);
+    console.log(`Triggered by: ${req.user.email}`);
+    console.log(`Timestamp: ${new Date().toISOString()}`);
+
     const dispute = await OfficialDispute.findById(dispute_id);
     if (!dispute) return res.status(404).json({ message: "Dispute not found" });
 
@@ -462,14 +467,16 @@ export const endConversation = async (req, res) => {
       }
     }, 1000);
 
+    console.log(`[SUCCESS] Conversation ended for dispute ${dispute_id}, returning success response`);
     res.json({
       success: true,
       message: "Conversation ended. Generating AI summary...",
       status: "AI_SUMMARIZING"
     });
+    console.log(`[SUCCESS] HTTP response sent for dispute ${dispute_id}\n`);
 
   } catch (err) {
-    console.error("End conversation error:", err);
+    console.error(`[ERROR] End conversation failed for dispute ${req.body.dispute_id}:`, err.message);
     res.status(500).json({ message: "Failed to end conversation", error: err.message });
   }
 };

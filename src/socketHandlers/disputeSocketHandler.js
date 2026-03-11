@@ -113,8 +113,7 @@ export const setupDisputeSocket = (io) => {
 
     // END CONVERSATION
     requireAuth("end_conversation", async ({ dispute_id }, callback) => {
-      console.log(`Dispute ID: ${dispute_id}`);
-      console.log(`Triggered by: ${socket.user.email} (${socket.userRole})`);
+      console.log(`Conversation ended for dispute ${dispute_id} by ${socket.user.email}`);
       console.log(`Socket ID: ${socket.id}`);
       console.log(`Timestamp: ${new Date().toISOString()}`);
 
