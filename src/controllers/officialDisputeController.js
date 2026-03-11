@@ -403,6 +403,35 @@ export const getConversationMessages = async (req, res) => {
   }
 };
 
+// NEW ENDPOINT: GET GENERATED SOLUTIONS
+export const getSolutions = async (req, res) => {
+  try {
+    const { dispute_id } = req.params;
+
+    const dispute = await OfficialDispute.findById(dispute_id);
+    if (!dispute) return res.status(404).json({ message: "Dispute not found" });
+
+    const isParticipant =
+      dispute.creator_id.toString() === req.user._id.toString() ||
+      dispute.joiner_id?.toString() === req.user._id.toString();
+
+    if (!isParticipant) return res.status(403).json({ message: "Not authorized" });
+
+    if (!dispute.solutions || dispute.solutions.length === 0) {
+      return res.status(404).json({ message: "Solutions not generated yet" });
+    }
+
+    res.json({
+      success: true,
+      solutions: dispute.solutions,
+      status: dispute.status
+    });
+
+  } catch (err) {
+    res.status(500).json({ message: "Failed to fetch solutions", error: err.message });
+  }
+};
+
 // ENDPOINT 6: END CONVERSATION
 export const endConversation = async (req, res) => {
   try {

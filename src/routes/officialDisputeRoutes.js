@@ -23,6 +23,7 @@ router.post("/summary/report", auth, controller.reportSummary);
 router.post("/summary/approve", auth, controller.approveSummary);
 
 // SCREEN 7: Solutions Selection
+router.get("/solutions/:dispute_id", auth, controller.getSolutions);  // new endpoint to fetch generated solutions
 router.post("/solutions/select", auth, controller.selectSolutions);
 
 // SCREEN 8: Negotiation Phase
