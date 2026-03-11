@@ -33,6 +33,9 @@ app.use((req, res, next) => {
   next();
 });
 
+// also store on app locals so controllers can fetch even if req.io is missing
+app.set('io', io);
+
 console.log("Socket.IO attached to Express app");
 
 // 4. SETUP DISPUTE SOCKET HANDLERS

@@ -433,15 +433,34 @@ export const endConversation = async (req, res) => {
     dispute.status = "AI_SUMMARIZING";
     await dispute.save();
 
-    if (req.io) {
-      console.log(`[Controller] Emitting conversation_ended for dispute ${dispute_id}`);
-      req.io.to(dispute_id).emit("conversation_ended", {
+    // DIAGNOSTIC: Check if IO is attached and room has users
+    const ioInstance = req.io || req.app.get('io');
+    console.log(`IO attached on req: ${!!req.io}`);
+    console.log(`IO from app locals: ${!!req.app.get('io')}`);
+    console.log(`Emitting to room: ${dispute_id}`);
+    if (ioInstance) {
+      try {
+        const roomSockets = await ioInstance.in(dispute_id).fetchSockets();
+        console.log(`[DIAGNOSTIC] Sockets in room "${dispute_id}": ${roomSockets.length}`);
+        roomSockets.forEach((socket, index) => {
+          console.log(`  [Socket ${index}] ID: ${socket.id}, UserID: ${socket.userId}, Role: ${socket.userRole}`);
+        });
+      } catch (err) {
+        console.error(`[DIAGNOSTIC ERROR] Could not fetch room sockets:`, err.message);
+      }
+    }
+
+    if (ioInstance) {
+      console.log(`[Controller] Emitting conversation_ended for dispute ${dispute_id} via ${req.io ? 'req.io' : 'app.io'}`);
+      ioInstance.to(dispute_id).emit("conversation_ended", {
         ended_by: req.user._id,
         status: "AI_SUMMARIZING",
         message: "Conversation ended. AI is generating summary...",
         timestamp: new Date()
       });
       console.log(`[Controller] conversation_ended emit complete for dispute ${dispute_id}`);
+    } else {
+      console.warn('[WARN] No IO instance available to emit conversation_ended');
     }
 
     // store dispute_id as string before setTimeout
