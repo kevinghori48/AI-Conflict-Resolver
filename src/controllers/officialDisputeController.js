@@ -452,10 +452,10 @@ export const endConversation = async (req, res) => {
 };
 
 // HELPER: GENERATE AI SUMMARY
-async function generateAISummary(dispute, dispute_id, io) {
+export async function generateAISummary(dispute, dispute_id, io) {
   try {
     console.log("Fetching messages for dispute:", dispute._id.toString());
-    
+
     const messages = await DisputeMessage.find({ 
       dispute_id: dispute._id.toString()  // force string comparison
     })

@@ -422,6 +422,7 @@
         }
 
         function addMessage(message, isSent, senderName = '') {
+            console.log('🎯 addMessage called:', {message, isSent, senderName});
             const messagesDiv = document.getElementById('chatMessages');
             const msgDiv = document.createElement('div');
             msgDiv.className = `message ${isSent ? 'sent' : 'received'}`;
@@ -464,6 +465,7 @@
             msgDiv.innerHTML = content;
             messagesDiv.appendChild(msgDiv);
             scrollToBottom();
+            console.log('✅ Message added to DOM');
 
             // Auto-mark as delivered if it's a received message
             if (!isSent && message.status === 'sent') {
@@ -636,9 +638,21 @@
             });
 
             socket.on('new_message', (data) => {
-                const isSent = data.sender_role === currentUserRole;
-                const senderName = data.message.sender_id.firstName + ' ' + data.message.sender_id.lastName;
-                addMessage(data.message, isSent, isSent ? '' : senderName);
+                console.log('📨 New message received:', data);
+                if (!data.message) {
+                    console.error('❌ Message object is missing in new_message event');
+                    addSystemMessage('❌ Error: Message data missing');
+                    return;
+                }
+                try {
+                    const isSent = data.sender_role === currentUserRole;
+                    const senderName = data.message.sender_id.firstName + ' ' + data.message.sender_id.lastName;
+                    console.log(`✉️ Adding message from ${senderName} (role: ${data.sender_role}, current role: ${currentUserRole})`);
+                    addMessage(data.message, isSent, isSent ? '' : senderName);
+                } catch (error) {
+                    console.error('❌ Error processing new_message:', error);
+                    addSystemMessage('❌ Error displaying message: ' + error.message);
+                }
             });
 
             socket.on('message_error', (error) => {
@@ -756,8 +770,17 @@
             const input = document.getElementById('messageInput');
             const text = input.value.trim();
 
+            console.log('🔍 Send Message Debug:', {
+                text,
+                socketConnected: socket?.connected,
+                socketId: socket?.id,
+                currentDisputeId,
+                currentUserRole
+            });
+
             if (!text || !socket || !socket.connected) {
-                console.log('Cannot send:', { text, socketConnected: socket?.connected });
+                console.log('❌ Cannot send - missing requirements:', { text, socketConnected: socket?.connected });
+                addSystemMessage('❌ Not connected to server');
                 return;
             }
 
