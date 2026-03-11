@@ -113,16 +113,21 @@ export const setupDisputeSocket = (io) => {
 
     // END CONVERSATION
     requireAuth("end_conversation", async ({ dispute_id }, callback) => {
-      console.log(`End conversation request for ${dispute_id} from ${socket.user.email}`);
+      console.log(`Dispute ID: ${dispute_id}`);
+      console.log(`Triggered by: ${socket.user.email} (${socket.userRole})`);
+      console.log(`Socket ID: ${socket.id}`);
+      console.log(`Timestamp: ${new Date().toISOString()}`);
 
       const dispute = await OfficialDispute.findById(dispute_id);
 
       if (!dispute) {
+        console.log(`[Error] Dispute not found: ${dispute_id}`);
         if (callback) callback({ success: false, message: "Dispute not found" });
         return;
       }
 
       if (dispute.status !== "CONVERSATION") {
+        console.log(`[Error] Wrong status: ${dispute.status} (expected CONVERSATION)`);
         if (callback) callback({ success: false, message: "Conversation already ended or not started" });
         return;
       }
@@ -132,6 +137,7 @@ export const setupDisputeSocket = (io) => {
         dispute.joiner_id?.toString() === socket.userId;
 
       if (!isParticipant) {
+        console.log(`[Error] Not a participant: ${socket.userId}`);
         if (callback) callback({ success: false, message: "Not a participant" });
         return;
       }
@@ -141,7 +147,9 @@ export const setupDisputeSocket = (io) => {
       dispute.status = "AI_SUMMARIZING";
       await dispute.save();
 
-      // Notify both users in the room
+      console.log(`[Success] Status updated to AI_SUMMARIZING`);
+      console.log(`[Success] Emitting conversation_ended to room: ${dispute_id}`);
+
       io.to(dispute_id).emit("conversation_ended", {
         ended_by: socket.userId,
         ended_by_role: socket.userRole,
@@ -152,18 +160,21 @@ export const setupDisputeSocket = (io) => {
 
       if (callback) callback({ success: true, status: "AI_SUMMARIZING" });
 
-      // Refetch fresh dispute and generate summary
       const disputeIdString = dispute._id.toString();
+      console.log(`[Wait] Starting summary generation in 1s for dispute: ${disputeIdString}`);
+
       setTimeout(async () => {
         try {
+          console.log(`[AI] Calling generateAISummary for dispute: ${disputeIdString}`);
           const freshDispute = await OfficialDispute.findById(disputeIdString);
           if (!freshDispute) {
-            console.error("Dispute not found during summary generation");
+            console.error(`[Error] Fresh dispute not found: ${disputeIdString}`);
             return;
           }
           await generateAISummary(freshDispute, io);
+          console.log(`[Success] Summary generation completed for dispute: ${disputeIdString}`);
         } catch (error) {
-          console.error("Summary generation failed:", error);
+          console.error(`[Error] Summary generation failed for dispute ${disputeIdString}:`, error);
           io.to(disputeIdString).emit("summary_generation_failed", {
             message: "Failed to generate summary. Please try again.",
             error: error.message

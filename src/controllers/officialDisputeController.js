@@ -429,12 +429,14 @@ export const endConversation = async (req, res) => {
     await dispute.save();
 
     if (req.io) {
+      console.log(`[Controller] Emitting conversation_ended for dispute ${dispute_id}`);
       req.io.to(dispute_id).emit("conversation_ended", {
         ended_by: req.user._id,
         status: "AI_SUMMARIZING",
         message: "Conversation ended. AI is generating summary...",
         timestamp: new Date()
       });
+      console.log(`[Controller] conversation_ended emit complete for dispute ${dispute_id}`);
     }
 
     // store dispute_id as string before setTimeout
