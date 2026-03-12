@@ -5,7 +5,7 @@ import User from "../models/User.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { generateAISummary } from "../controllers/officialDisputeController.js";
+import { generateAISummary, generateFinalPlan } from "../controllers/officialDisputeController.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -65,12 +65,23 @@ export const setupDisputeSocket = (io) => {
     };
 
     // JOIN DISPUTE ROOM
-    requireAuth("join_dispute", async ({ dispute_id }) => {
-      console.log(`Join request: ${dispute_id} from ${socket.user.email}`);
+    requireAuth("join_dispute", async ({ dispute_id, invite_code }) => {
+      const joinRef = dispute_id || invite_code;
+      console.log(`Join request: ${joinRef} from ${socket.user.email}`);
 
-      const dispute = await OfficialDispute.findById(dispute_id)
-        .populate('creator_id', 'firstName lastName email')
-        .populate('joiner_id', 'firstName lastName email');
+      let disputeQuery;
+      if (dispute_id) {
+        disputeQuery = OfficialDispute.findById(dispute_id);
+      } else if (invite_code) {
+        disputeQuery = OfficialDispute.findOne({ invite_code: invite_code.toUpperCase() });
+      } else {
+        socket.emit("error", { message: "dispute_id or invite_code is required" });
+        return;
+      }
+
+      const dispute = await disputeQuery
+        .populate("creator_id", "firstName lastName email")
+        .populate("joiner_id", "firstName lastName email");
 
       if (!dispute) {
         socket.emit("error", { message: "Dispute not found" });
@@ -85,11 +96,12 @@ export const setupDisputeSocket = (io) => {
         return;
       }
 
-      socket.join(dispute_id);
-      socket.currentDispute = dispute_id;
+      const roomId = dispute._id.toString();
+      socket.join(roomId);
+      socket.currentDispute = roomId;
       socket.userRole = isCreator ? "creator" : "joiner";
 
-      console.log(`${socket.user.email} joined room ${dispute_id} as ${socket.userRole}`);
+      console.log(`${socket.user.email} joined room ${roomId} as ${socket.userRole}`);
 
       // Send full dispute state to the user who just joined
       socket.emit("dispute_state", {
@@ -103,7 +115,7 @@ export const setupDisputeSocket = (io) => {
       });
 
       // Notify the other party
-      socket.to(dispute_id).emit("user_online", {
+      socket.to(roomId).emit("user_online", {
         user_id: socket.userId,
         user_role: socket.userRole,
         user_name: `${socket.user.firstName} ${socket.user.lastName}`,
@@ -361,6 +373,533 @@ export const setupDisputeSocket = (io) => {
       } catch (error) {
         console.error("Send audio error:", error);
         if (callback) callback({ success: false, message: "Failed to send audio", error: error.message });
+      }
+    });
+
+    const getRoomDisputeId = (payload) => payload?.dispute_id || socket.currentDispute;
+
+    // ACCEPT SUGGESTED PLAN (Socket version)
+    requireAuth("accept_suggested_plan", async ({ dispute_id }, callback) => {
+      const roomId = getRoomDisputeId({ dispute_id });
+      if (!roomId) {
+        if (callback) callback({ success: false, message: "dispute_id is required" });
+        return;
+      }
+
+      const dispute = await OfficialDispute.findById(roomId);
+      if (!dispute) {
+        if (callback) callback({ success: false, message: "Dispute not found" });
+        return;
+      }
+
+      if (dispute.status !== "SUGGESTED_PLAN_REVIEW") {
+        if (callback) callback({ success: false, message: "No suggested plan available for acceptance" });
+        return;
+      }
+
+      const isCreator = dispute.creator_id.toString() === socket.userId;
+      const isJoiner = dispute.joiner_id?.toString() === socket.userId;
+      if (!isCreator && !isJoiner) {
+        if (callback) callback({ success: false, message: "Not a participant" });
+        return;
+      }
+
+      if (isCreator && dispute.suggested_plan_approval?.creator_approved) {
+        if (callback) callback({ success: false, message: "You have already accepted the plan" });
+        return;
+      }
+      if (isJoiner && dispute.suggested_plan_approval?.joiner_approved) {
+        if (callback) callback({ success: false, message: "You have already accepted the plan" });
+        return;
+      }
+
+      if (isCreator) dispute.suggested_plan_approval.creator_approved = true;
+      else dispute.suggested_plan_approval.joiner_approved = true;
+
+      await dispute.save();
+
+      if (dispute.suggested_plan_approval.creator_approved && dispute.suggested_plan_approval.joiner_approved) {
+        dispute.status = "COMPLETED";
+        dispute.completed_at = new Date();
+        dispute.final_plan = dispute.suggested_plan;
+        dispute.final_plan_approval = { creator_approved: true, joiner_approved: true };
+        await dispute.save();
+
+        io.to(roomId).emit("dispute_completed", {
+          status: "COMPLETED",
+          final_plan: dispute.final_plan,
+          message: "Both parties accepted the suggested plan. Dispute resolved successfully!",
+          timestamp: new Date()
+        });
+
+        if (callback) {
+          callback({ success: true, status: "COMPLETED", final_plan: dispute.final_plan });
+        }
+        return;
+      }
+
+      io.to(roomId).emit("suggested_plan_approval_update", {
+        creator_approved: dispute.suggested_plan_approval.creator_approved,
+        joiner_approved: dispute.suggested_plan_approval.joiner_approved,
+        message: "Acceptance recorded. Waiting for other party.",
+        timestamp: new Date()
+      });
+
+      if (callback) {
+        callback({
+          success: true,
+          status: dispute.status,
+          creator_approved: dispute.suggested_plan_approval.creator_approved,
+          joiner_approved: dispute.suggested_plan_approval.joiner_approved
+        });
+      }
+    });
+
+    // REJECT SUGGESTED PLAN → START NEGOTIATION (Socket version)
+    requireAuth("reject_suggested_plan", async ({ dispute_id, reason }, callback) => {
+      const roomId = getRoomDisputeId({ dispute_id });
+      if (!roomId) {
+        if (callback) callback({ success: false, message: "dispute_id is required" });
+        return;
+      }
+
+      const dispute = await OfficialDispute.findById(roomId);
+      if (!dispute) {
+        if (callback) callback({ success: false, message: "Dispute not found" });
+        return;
+      }
+
+      if (dispute.status !== "SUGGESTED_PLAN_REVIEW") {
+        if (callback) callback({ success: false, message: "No suggested plan to reject" });
+        return;
+      }
+
+      const isCreator = dispute.creator_id.toString() === socket.userId;
+      const isJoiner = dispute.joiner_id?.toString() === socket.userId;
+      if (!isCreator && !isJoiner) {
+        if (callback) callback({ success: false, message: "Not a participant" });
+        return;
+      }
+
+      dispute.suggested_plan_approval = { creator_approved: false, joiner_approved: false };
+      dispute.status = "NEGOTIATION";
+      await dispute.save();
+
+      io.to(roomId).emit("negotiation_started", {
+        status: "NEGOTIATION",
+        rejected_by: isCreator ? "creator" : "joiner",
+        reason: reason || "Party wants to negotiate further",
+        suggested_plan: dispute.suggested_plan,
+        creator_selections: dispute.solution_selections.creator_selected,
+        joiner_selections: dispute.solution_selections.joiner_selected,
+        message: "Suggested plan rejected. Starting negotiation round.",
+        timestamp: new Date()
+      });
+
+      if (callback) callback({ success: true, status: "NEGOTIATION" });
+    });
+
+    // POST NEGOTIATION COMMENT (Socket version)
+    requireAuth("post_negotiation_comment", async ({ dispute_id, text }, callback) => {
+      const roomId = getRoomDisputeId({ dispute_id });
+      if (!roomId) {
+        if (callback) callback({ success: false, message: "dispute_id is required" });
+        return;
+      }
+      if (!text || text.trim() === "") {
+        if (callback) callback({ success: false, message: "Comment text is required" });
+        return;
+      }
+
+      const dispute = await OfficialDispute.findById(roomId);
+      if (!dispute) {
+        if (callback) callback({ success: false, message: "Dispute not found" });
+        return;
+      }
+      if (dispute.status !== "NEGOTIATION") {
+        if (callback) callback({ success: false, message: "Dispute is not in negotiation phase" });
+        return;
+      }
+
+      const isCreator = dispute.creator_id.toString() === socket.userId;
+      const isJoiner = dispute.joiner_id?.toString() === socket.userId;
+      if (!isCreator && !isJoiner) {
+        if (callback) callback({ success: false, message: "Not a participant" });
+        return;
+      }
+
+      const senderRole = isCreator ? "creator" : "joiner";
+      const comment = {
+        sender_id: socket.userId,
+        sender_role: senderRole,
+        text: text.trim(),
+        timestamp: new Date()
+      };
+
+      dispute.negotiation.comments.push(comment);
+      dispute.negotiation.creator_ready = false;
+      dispute.negotiation.joiner_ready = false;
+      await dispute.save();
+
+      const savedComment = dispute.negotiation.comments[dispute.negotiation.comments.length - 1];
+
+      io.to(roomId).emit("new_negotiation_comment", {
+        comment: {
+          ...savedComment.toObject?.(),
+          ...(!savedComment.toObject ? savedComment : {}),
+          sender_name: `${socket.user.firstName} ${socket.user.lastName}`
+        },
+        creator_ready: false,
+        joiner_ready: false,
+        timestamp: new Date()
+      });
+
+      if (callback) callback({ success: true, comment: savedComment });
+    });
+
+    // SIGNAL AGREEMENT (Socket version) → triggers final plan generation
+    requireAuth("signal_agreement", async ({ dispute_id }, callback) => {
+      const roomId = getRoomDisputeId({ dispute_id });
+      if (!roomId) {
+        if (callback) callback({ success: false, message: "dispute_id is required" });
+        return;
+      }
+
+      const dispute = await OfficialDispute.findById(roomId);
+      if (!dispute) {
+        if (callback) callback({ success: false, message: "Dispute not found" });
+        return;
+      }
+      if (dispute.status !== "NEGOTIATION") {
+        if (callback) callback({ success: false, message: "Dispute is not in negotiation phase" });
+        return;
+      }
+
+      const isCreator = dispute.creator_id.toString() === socket.userId;
+      const isJoiner = dispute.joiner_id?.toString() === socket.userId;
+      if (!isCreator && !isJoiner) {
+        if (callback) callback({ success: false, message: "Not a participant" });
+        return;
+      }
+
+      if (isCreator) dispute.negotiation.creator_ready = true;
+      else dispute.negotiation.joiner_ready = true;
+      await dispute.save();
+
+      if (dispute.negotiation.creator_ready && dispute.negotiation.joiner_ready) {
+        dispute.status = "AI_SUMMARIZING";
+        await dispute.save();
+
+        io.to(roomId).emit("generating_final_plan", {
+          status: "AI_SUMMARIZING",
+          message: "Both parties agreed. AI is constructing the final resolution plan...",
+          timestamp: new Date()
+        });
+
+        const disputeIdString = dispute._id.toString();
+        setTimeout(async () => {
+          try {
+            const freshDispute = await OfficialDispute.findById(disputeIdString);
+            if (!freshDispute) return;
+            await generateFinalPlan(freshDispute, disputeIdString, io);
+          } catch (error) {
+            console.error("Final plan generation failed:", error);
+            const rollback = await OfficialDispute.findById(disputeIdString);
+            if (rollback) {
+              rollback.status = "NEGOTIATION";
+              await rollback.save();
+            }
+            io.to(disputeIdString).emit("final_plan_failed", {
+              message: "Failed to generate final plan. Please try again.",
+              error: error.message
+            });
+          }
+        }, 1000);
+
+        if (callback) callback({ success: true, status: "AI_SUMMARIZING" });
+        return;
+      }
+
+      io.to(roomId).emit("agreement_update", {
+        creator_ready: dispute.negotiation.creator_ready,
+        joiner_ready: dispute.negotiation.joiner_ready,
+        message: "Agreement signal recorded. Waiting for other party.",
+        timestamp: new Date()
+      });
+
+      if (callback) {
+        callback({
+          success: true,
+          status: dispute.status,
+          creator_ready: dispute.negotiation.creator_ready,
+          joiner_ready: dispute.negotiation.joiner_ready
+        });
+      }
+    });
+
+    // GET SUGGESTED PLAN (Socket version)
+    requireAuth("get_suggested_plan", async ({ dispute_id }, callback) => {
+      const roomId = getRoomDisputeId({ dispute_id });
+      if (!roomId) {
+        if (callback) callback({ success: false, message: "dispute_id is required" });
+        return;
+      }
+
+      const dispute = await OfficialDispute.findById(roomId);
+      if (!dispute) {
+        if (callback) callback({ success: false, message: "Dispute not found" });
+        return;
+      }
+
+      const isCreator = dispute.creator_id.toString() === socket.userId;
+      const isJoiner = dispute.joiner_id?.toString() === socket.userId;
+      if (!isCreator && !isJoiner) {
+        if (callback) callback({ success: false, message: "Not authorized" });
+        return;
+      }
+
+      if (!dispute.suggested_plan || !dispute.suggested_plan.title) {
+        if (callback) callback({ success: false, message: "Suggested plan not generated yet" });
+        return;
+      }
+
+      if (callback) {
+        callback({
+          success: true,
+          status: dispute.status,
+          suggested_plan: dispute.suggested_plan,
+          approval: {
+            creator_approved: dispute.suggested_plan_approval?.creator_approved || false,
+            joiner_approved: dispute.suggested_plan_approval?.joiner_approved || false,
+            your_approval: isCreator
+              ? dispute.suggested_plan_approval?.creator_approved
+              : dispute.suggested_plan_approval?.joiner_approved
+          }
+        });
+      }
+    });
+
+    // GET NEGOTIATION COMMENTS (Socket version)
+    requireAuth("get_negotiation_comments", async ({ dispute_id }, callback) => {
+      const roomId = getRoomDisputeId({ dispute_id });
+      if (!roomId) {
+        if (callback) callback({ success: false, message: "dispute_id is required" });
+        return;
+      }
+
+      const dispute = await OfficialDispute.findById(roomId)
+        .populate("negotiation.comments.sender_id", "firstName lastName email");
+      if (!dispute) {
+        if (callback) callback({ success: false, message: "Dispute not found" });
+        return;
+      }
+
+      const isCreator = dispute.creator_id.toString() === socket.userId;
+      const isJoiner = dispute.joiner_id?.toString() === socket.userId;
+      if (!isCreator && !isJoiner) {
+        if (callback) callback({ success: false, message: "Not authorized" });
+        return;
+      }
+
+      if (callback) {
+        callback({
+          success: true,
+          status: dispute.status,
+          comments: dispute.negotiation.comments,
+          creator_ready: dispute.negotiation.creator_ready,
+          joiner_ready: dispute.negotiation.joiner_ready,
+          count: dispute.negotiation.comments.length
+        });
+      }
+    });
+
+    // APPROVE FINAL PLAN (Socket version)
+    requireAuth("approve_final_plan", async ({ dispute_id }, callback) => {
+      const roomId = getRoomDisputeId({ dispute_id });
+      if (!roomId) {
+        if (callback) callback({ success: false, message: "dispute_id is required" });
+        return;
+      }
+
+      const dispute = await OfficialDispute.findById(roomId);
+      if (!dispute) {
+        if (callback) callback({ success: false, message: "Dispute not found" });
+        return;
+      }
+
+      if (dispute.status !== "FINAL_PLAN_REVIEW") {
+        if (callback) callback({ success: false, message: "Final plan is not ready for approval" });
+        return;
+      }
+
+      const isCreator = dispute.creator_id.toString() === socket.userId;
+      const isJoiner = dispute.joiner_id?.toString() === socket.userId;
+      if (!isCreator && !isJoiner) {
+        if (callback) callback({ success: false, message: "Not authorized to approve this plan" });
+        return;
+      }
+
+      if (isCreator && dispute.final_plan_approval.creator_approved) {
+        if (callback) callback({ success: false, message: "You have already approved the plan" });
+        return;
+      }
+      if (isJoiner && dispute.final_plan_approval.joiner_approved) {
+        if (callback) callback({ success: false, message: "You have already approved the plan" });
+        return;
+      }
+
+      if (isCreator) dispute.final_plan_approval.creator_approved = true;
+      else dispute.final_plan_approval.joiner_approved = true;
+
+      await dispute.save();
+
+      if (dispute.final_plan_approval.creator_approved && dispute.final_plan_approval.joiner_approved) {
+        dispute.status = "COMPLETED";
+        dispute.completed_at = new Date();
+        await dispute.save();
+
+        io.to(roomId).emit("dispute_completed", {
+          status: "COMPLETED",
+          final_plan: dispute.final_plan,
+          message: "Both parties approved the plan. Dispute resolved successfully!",
+          timestamp: new Date()
+        });
+
+        if (callback) callback({ success: true, status: "COMPLETED", final_plan: dispute.final_plan });
+        return;
+      }
+
+      io.to(roomId).emit("plan_approval_update", {
+        creator_approved: dispute.final_plan_approval.creator_approved,
+        joiner_approved: dispute.final_plan_approval.joiner_approved,
+        message: "Approval recorded. Waiting for other party.",
+        timestamp: new Date()
+      });
+
+      if (callback) {
+        callback({
+          success: true,
+          status: dispute.status,
+          creator_approved: dispute.final_plan_approval.creator_approved,
+          joiner_approved: dispute.final_plan_approval.joiner_approved
+        });
+      }
+    });
+
+    // GET FINAL PLAN (Socket version)
+    requireAuth("get_final_plan", async ({ dispute_id }, callback) => {
+      const roomId = getRoomDisputeId({ dispute_id });
+      if (!roomId) {
+        if (callback) callback({ success: false, message: "dispute_id is required" });
+        return;
+      }
+
+      const dispute = await OfficialDispute.findById(roomId);
+      if (!dispute) {
+        if (callback) callback({ success: false, message: "Dispute not found" });
+        return;
+      }
+
+      const isCreator = dispute.creator_id.toString() === socket.userId;
+      const isJoiner = dispute.joiner_id?.toString() === socket.userId;
+      if (!isCreator && !isJoiner) {
+        if (callback) callback({ success: false, message: "Not authorized" });
+        return;
+      }
+
+      if (!dispute.final_plan || !dispute.final_plan.title) {
+        if (callback) callback({ success: false, message: "Final plan not generated yet" });
+        return;
+      }
+
+      if (callback) {
+        callback({
+          success: true,
+          status: dispute.status,
+          final_plan: dispute.final_plan,
+          approval: {
+            creator_approved: dispute.final_plan_approval?.creator_approved || false,
+            joiner_approved: dispute.final_plan_approval?.joiner_approved || false,
+            your_approval: isCreator
+              ? dispute.final_plan_approval?.creator_approved
+              : dispute.final_plan_approval?.joiner_approved
+          }
+        });
+      }
+    });
+
+    // REPORT FINAL PLAN ISSUE (Socket version)
+    // Matches HTTP behavior: stores feedback; counts as implicit approval so dispute can complete.
+    requireAuth("report_final_plan_issue", async ({ dispute_id, feedback }, callback) => {
+      const roomId = getRoomDisputeId({ dispute_id });
+      if (!roomId) {
+        if (callback) callback({ success: false, message: "dispute_id is required" });
+        return;
+      }
+      if (!feedback || feedback.trim() === "") {
+        if (callback) callback({ success: false, message: "Please provide feedback about the issue" });
+        return;
+      }
+
+      const dispute = await OfficialDispute.findById(roomId);
+      if (!dispute) {
+        if (callback) callback({ success: false, message: "Dispute not found" });
+        return;
+      }
+
+      if (dispute.status !== "FINAL_PLAN_REVIEW" && dispute.status !== "COMPLETED") {
+        if (callback) callback({ success: false, message: "No final plan to report on" });
+        return;
+      }
+
+      const isCreator = dispute.creator_id.toString() === socket.userId;
+      const isJoiner = dispute.joiner_id?.toString() === socket.userId;
+      if (!isCreator && !isJoiner) {
+        if (callback) callback({ success: false, message: "Not a participant" });
+        return;
+      }
+
+      dispute.final_plan_reports.push({
+        reporter_id: socket.userId,
+        reporter_role: isCreator ? "creator" : "joiner",
+        feedback: feedback.trim(),
+        reported_at: new Date()
+      });
+
+      // Reporting also approves on behalf of this user
+      if (isCreator) dispute.final_plan_approval.creator_approved = true;
+      else dispute.final_plan_approval.joiner_approved = true;
+
+      // Complete if both approved/reported
+      if (dispute.final_plan_approval.creator_approved && dispute.final_plan_approval.joiner_approved) {
+        dispute.status = "COMPLETED";
+        dispute.completed_at = dispute.completed_at || new Date();
+      }
+
+      await dispute.save();
+
+      io.to(roomId).emit("final_plan_issue_reported", {
+        status: dispute.status,
+        reporter_role: isCreator ? "creator" : "joiner",
+        feedback: feedback.trim(),
+        timestamp: new Date()
+      });
+
+      if (dispute.status === "COMPLETED") {
+        io.to(roomId).emit("dispute_completed", {
+          status: "COMPLETED",
+          final_plan: dispute.final_plan,
+          message: "Dispute has been closed.",
+          timestamp: new Date()
+        });
+      }
+
+      if (callback) {
+        callback({
+          success: true,
+          status: dispute.status,
+          message: "Issue reported. Thank you for your feedback."
+        });
       }
     });
 

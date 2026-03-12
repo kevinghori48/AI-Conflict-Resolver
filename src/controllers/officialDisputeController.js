@@ -4,7 +4,6 @@ import DisputeMessage from "../models/DisputeMessage.js";
 import crypto from "crypto";
 import fs from "fs";
 
-// HELPER: Call Gemini AI
 async function callGemini(prompt) {
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
   const model = genAI.getGenerativeModel({
@@ -12,42 +11,35 @@ async function callGemini(prompt) {
     generationConfig: {
       responseMimeType: "application/json",
       temperature: 0
-     }
+    }
   });
   const result = await model.generateContent(prompt);
   return result.response.text();
 }
 
 const cleanAIResponse = (text) => {
-  try {
-    return JSON.parse(text);
-  } catch (err) {
-    try {
-      let cleaned = text
-        .replace(/```json/gi, '')
-        .replace(/```/g, '')
-        .trim();
-      return JSON.parse(cleaned);
-    } catch (err2) {
-      try {
-        const match = cleaned.match(/\{[\s\S]*\}/);
-        if (match) return JSON.parse(match[0]);
-      } catch (err3) {
-        const sanitized = text
-          .replace(/```json/gi, '')
-          .replace(/```/g, '')
-          .replace(/[\u0000-\u001F\u007F]/g, ' ')
-          .trim();
-        const match = sanitized.match(/\{[\s\S]*\}/);
-        if (match) return JSON.parse(match[0]);
-      }
-      console.error("JSON Parse Failed:", text);
-      throw new Error("AI returned invalid JSON format");
-    }
+  let cleaned = text
+    .replace(/```json/gi, "")
+    .replace(/```/g, "")
+    .replace(/[\u0000-\u001F\u007F]/g, " ")
+    .trim();
+
+  // Try raw text first, then cleaned, then extract first {...} block
+  for (const candidate of [text, cleaned]) {
+    try { return JSON.parse(candidate); } catch (_) { /* try next */ }
   }
+
+  const match = cleaned.match(/\{[\s\S]*\}/);
+  if (match) {
+    try { return JSON.parse(match[0]); } catch (_) { /* fall through */ }
+  }
+
+  console.error("JSON Parse Failed:", text);
+  throw new Error("AI returned invalid JSON format");
 };
 
 const generateCode = () => crypto.randomBytes(3).toString("hex").toUpperCase();
+
 
 const RELATIONSHIP_QUESTIONS = {
   couple: [
@@ -88,23 +80,19 @@ const RELATIONSHIP_QUESTIONS = {
   ]
 };
 
-// ENDPOINT 1: GET RELATIONSHIP QUESTIONS
+// SCREEN 1 & 2: DISPUTE CREATION
+
 export const getRelationshipQuestions = async (req, res) => {
   try {
     const { relationship_type } = req.params;
     const questions = RELATIONSHIP_QUESTIONS[relationship_type] || RELATIONSHIP_QUESTIONS.other;
-    res.json({
-      success: true,
-      relationship_type,
-      questions
-    });
+    res.json({ success: true, relationship_type, questions });
   } catch (err) {
-    console.error(err);
+    console.error("Get questions error:", err);
     res.status(500).json({ message: "Failed to get questions" });
   }
 };
 
-// ENDPOINT 2: CREATE DISPUTE
 export const createDispute = async (req, res) => {
   try {
     const {
@@ -128,19 +116,18 @@ export const createDispute = async (req, res) => {
     let parsedQuestions = [];
     if (relationship_questions) {
       try {
-        parsedQuestions = typeof relationship_questions === 'string'
+        parsedQuestions = typeof relationship_questions === "string"
           ? JSON.parse(relationship_questions)
           : relationship_questions;
-      } catch (e) {
+      } catch {
         return res.status(400).json({ message: "Invalid relationship_questions format" });
       }
     }
 
+    // Unique invite code
     let code = generateCode();
-    let exists = await OfficialDispute.findOne({ invite_code: code });
-    while (exists) {
+    while (await OfficialDispute.findOne({ invite_code: code })) {
       code = generateCode();
-      exists = await OfficialDispute.findOne({ invite_code: code });
     }
 
     const dispute = await OfficialDispute.create({
@@ -149,7 +136,7 @@ export const createDispute = async (req, res) => {
       invite_code: code,
       intake_data: {
         relationship_type,
-        custom_relationship: relationship_type === 'other' ? custom_relationship : undefined,
+        custom_relationship: relationship_type === "other" ? custom_relationship : undefined,
         relationship_importance,
         goal,
         non_negotiables,
@@ -167,14 +154,14 @@ export const createDispute = async (req, res) => {
       invite_code: code,
       dispute
     });
-
   } catch (err) {
     console.error("Create dispute error:", err);
     res.status(500).json({ message: "Failed to create dispute", error: err.message });
   }
 };
 
-// ENDPOINT 3: JOIN DISPUTE
+// SCREEN 4: JOIN DISPUTE
+
 export const joinDispute = async (req, res) => {
   try {
     const { invite_code } = req.body;
@@ -186,34 +173,28 @@ export const joinDispute = async (req, res) => {
     const dispute = await OfficialDispute.findOne({
       invite_code: invite_code.toUpperCase(),
       status: "PRE_DISPUTE"
-    }).populate('creator_id', 'firstName lastName email');
+    }).populate("creator_id", "firstName lastName email");
 
     if (!dispute) {
-      return res.status(404).json({
-        message: "Invalid invite code or dispute already started"
-      });
+      return res.status(404).json({ message: "Invalid invite code or dispute already started" });
     }
 
     if (dispute.creator_id._id.toString() === req.user._id.toString()) {
-      return res.status(400).json({
-        message: "You cannot join your own dispute"
-      });
+      return res.status(400).json({ message: "You cannot join your own dispute" });
     }
 
     if (dispute.joiner_id) {
-      return res.status(400).json({
-        message: "This dispute already has two participants"
-      });
+      return res.status(400).json({ message: "This dispute already has two participants" });
     }
 
     dispute.joiner_id = req.user._id;
     dispute.status = "CONVERSATION";
     await dispute.save();
+    await dispute.populate("joiner_id", "firstName lastName email");
 
-    await dispute.populate('joiner_id', 'firstName lastName email');
-
+    // FIX: was using undefined 'dispute_id' variable — use dispute._id.toString()
     if (req.io) {
-      req.io.to(dispute_id).emit("joiner_connected", {
+      req.io.to(dispute._id.toString()).emit("joiner_connected", {
         joiner_id: req.user._id,
         joiner_name: `${req.user.firstName} ${req.user.lastName}`,
         status: "CONVERSATION",
@@ -230,12 +211,13 @@ export const joinDispute = async (req, res) => {
       dispute_name: dispute.dispute_name,
       dispute
     });
-
   } catch (err) {
     console.error("Join dispute error:", err);
     res.status(500).json({ message: "Failed to join dispute", error: err.message });
   }
 };
+
+// SCREEN 5: CONVERSATION — AUDIO
 
 export const sendAudioMessage = async (req, res) => {
   try {
@@ -246,14 +228,15 @@ export const sendAudioMessage = async (req, res) => {
       return res.status(400).json({ message: "No audio file provided" });
     }
 
-    const dispute = await OfficialDispute.findById(dispute_id);
-    if (!dispute) {
+    const cleanupFile = () => {
       try { fs.unlinkSync(file.path); } catch (e) { console.error("Failed to cleanup file:", e); }
-      return res.status(404).json({ message: "Dispute not found" });
-    }
+    };
+
+    const dispute = await OfficialDispute.findById(dispute_id);
+    if (!dispute) { cleanupFile(); return res.status(404).json({ message: "Dispute not found" }); }
 
     if (dispute.status !== "CONVERSATION") {
-      try { fs.unlinkSync(file.path); } catch (e) { console.error("Failed to cleanup file:", e); }
+      cleanupFile();
       return res.status(400).json({ message: "Dispute is not in conversation phase" });
     }
 
@@ -261,17 +244,16 @@ export const sendAudioMessage = async (req, res) => {
     const isJoiner = dispute.joiner_id?.toString() === req.user._id.toString();
 
     if (!isCreator && !isJoiner) {
-      try { fs.unlinkSync(file.path); } catch (e) { console.error("Failed to cleanup file:", e); }
+      cleanupFile();
       return res.status(403).json({ message: "You are not a participant of this dispute" });
     }
 
     const senderRole = isCreator ? "creator" : "joiner";
     const currentCount = dispute.conversation.audio_count[senderRole] || 0;
+
     if (currentCount >= 5) {
-      try { fs.unlinkSync(file.path); } catch (e) { console.error("Failed to cleanup file:", e); }
-      return res.status(400).json({
-        message: `Maximum 5 audio messages allowed per person. You've reached the limit.`
-      });
+      cleanupFile();
+      return res.status(400).json({ message: "Maximum 5 audio messages allowed per person. You've reached the limit." });
     }
 
     const message = await DisputeMessage.create({
@@ -292,8 +274,7 @@ export const sendAudioMessage = async (req, res) => {
     dispute.conversation.messages.push(message._id);
     dispute.conversation.audio_count[senderRole] = currentCount + 1;
     await dispute.save();
-
-    await message.populate('sender_id', 'firstName lastName email');
+    await message.populate("sender_id", "firstName lastName email");
 
     if (req.io) {
       req.io.to(dispute_id).emit("new_message", {
@@ -311,17 +292,15 @@ export const sendAudioMessage = async (req, res) => {
       remaining_audios: 5 - dispute.conversation.audio_count[senderRole],
       audio_count: dispute.conversation.audio_count
     });
-
   } catch (err) {
     console.error("Send audio error:", err);
-    if (req.file && req.file.path) {
+    if (req.file?.path) {
       try { fs.unlinkSync(req.file.path); } catch (e) { console.error("Failed to cleanup file:", e); }
     }
     res.status(500).json({ message: "Failed to send audio", error: err.message });
   }
 };
 
-// ENDPOINT 4: GET AUDIO FILE
 export const getAudioFile = async (req, res) => {
   try {
     const { message_id } = req.params;
@@ -332,6 +311,8 @@ export const getAudioFile = async (req, res) => {
     }
 
     const dispute = await OfficialDispute.findById(message.dispute_id);
+    if (!dispute) return res.status(404).json({ message: "Dispute not found" });
+
     const isParticipant =
       dispute.creator_id.toString() === req.user._id.toString() ||
       dispute.joiner_id?.toString() === req.user._id.toString();
@@ -341,29 +322,27 @@ export const getAudioFile = async (req, res) => {
     }
 
     if (message.audio_data.data) {
-      const buffer = Buffer.from(message.audio_data.data, 'base64');
-      res.setHeader('Content-Type', message.audio_data.mimetype || 'audio/webm');
-      res.setHeader('Content-Length', buffer.length);
+      const buffer = Buffer.from(message.audio_data.data, "base64");
+      res.setHeader("Content-Type", message.audio_data.mimetype || "audio/webm");
+      res.setHeader("Content-Length", buffer.length);
       return res.send(buffer);
     }
 
     const filePath = message.audio_data.file_path;
     if (filePath && fs.existsSync(filePath)) {
-      res.setHeader('Content-Type', message.audio_data.mimetype);
-      res.setHeader('Content-Length', message.audio_data.size);
-      res.setHeader('Content-Disposition', `inline; filename="${message.audio_data.original_name}"`);
+      res.setHeader("Content-Type", message.audio_data.mimetype);
+      res.setHeader("Content-Length", message.audio_data.size);
+      res.setHeader("Content-Disposition", `inline; filename="${message.audio_data.original_name}"`);
       return fs.createReadStream(filePath).pipe(res);
     }
 
     res.status(404).json({ message: "Audio file not found on server" });
-
   } catch (err) {
     console.error("Get audio error:", err);
     res.status(500).json({ message: "Failed to get audio file" });
   }
 };
 
-// ENDPOINT 5: GET CONVERSATION MESSAGES
 export const getConversationMessages = async (req, res) => {
   try {
     const { dispute_id } = req.params;
@@ -383,8 +362,9 @@ export const getConversationMessages = async (req, res) => {
     const query = { dispute_id };
     if (before) query.timestamp = { $lt: new Date(before) };
 
+    // FIX: was calling .reverse() twice — that cancelled out the sort. Now only called once.
     const messages = await DisputeMessage.find(query)
-      .populate('sender_id', 'firstName lastName email')
+      .populate("sender_id", "firstName lastName email")
       .sort({ timestamp: -1 })
       .limit(parseInt(limit));
 
@@ -393,54 +373,17 @@ export const getConversationMessages = async (req, res) => {
       count: messages.length,
       audio_count: dispute.conversation.audio_count,
       messages: messages.reverse(),
-      messages: messages.reverse(),
       has_more: messages.length === parseInt(limit)
     });
-
   } catch (err) {
     console.error("Fetch messages error:", err);
     res.status(500).json({ message: "Failed to fetch messages", error: err.message });
   }
 };
 
-// NEW ENDPOINT: GET GENERATED SOLUTIONS
-export const getSolutions = async (req, res) => {
-  try {
-    const { dispute_id } = req.params;
-
-    const dispute = await OfficialDispute.findById(dispute_id);
-    if (!dispute) return res.status(404).json({ message: "Dispute not found" });
-
-    const isParticipant =
-      dispute.creator_id.toString() === req.user._id.toString() ||
-      dispute.joiner_id?.toString() === req.user._id.toString();
-
-    if (!isParticipant) return res.status(403).json({ message: "Not authorized" });
-
-    if (!dispute.solutions || dispute.solutions.length === 0) {
-      return res.status(404).json({ message: "Solutions not generated yet" });
-    }
-
-    res.json({
-      success: true,
-      solutions: dispute.solutions,
-      status: dispute.status
-    });
-
-  } catch (err) {
-    res.status(500).json({ message: "Failed to fetch solutions", error: err.message });
-  }
-};
-
-// ENDPOINT 6: END CONVERSATION
 export const endConversation = async (req, res) => {
   try {
     const { dispute_id } = req.body;
-
-    console.log(`\nEND CONVERSATION HTTP ENDPOINT TRIGGERED`);
-    console.log(`Dispute ID: ${dispute_id}`);
-    console.log(`Triggered by: ${req.user.email}`);
-    console.log(`Timestamp: ${new Date().toISOString()}`);
 
     const dispute = await OfficialDispute.findById(dispute_id);
     if (!dispute) return res.status(404).json({ message: "Dispute not found" });
@@ -462,52 +405,32 @@ export const endConversation = async (req, res) => {
     dispute.status = "AI_SUMMARIZING";
     await dispute.save();
 
-    // DIAGNOSTIC: Check if IO is attached and room has users
-    const ioInstance = req.io || req.app.get('io');
-    console.log(`IO attached on req: ${!!req.io}`);
-    console.log(`IO from app locals: ${!!req.app.get('io')}`);
-    console.log(`Emitting to room: ${dispute_id}`);
-    if (ioInstance) {
-      try {
-        const roomSockets = await ioInstance.in(dispute_id).fetchSockets();
-        console.log(`[DIAGNOSTIC] Sockets in room "${dispute_id}": ${roomSockets.length}`);
-        roomSockets.forEach((socket, index) => {
-          console.log(`  [Socket ${index}] ID: ${socket.id}, UserID: ${socket.userId}, Role: ${socket.userRole}`);
-        });
-      } catch (err) {
-        console.error(`[DIAGNOSTIC ERROR] Could not fetch room sockets:`, err.message);
-      }
-    }
+    const ioInstance = req.io || req.app.get("io");
 
     if (ioInstance) {
-      console.log(`[Controller] Emitting conversation_ended for dispute ${dispute_id} via ${req.io ? 'req.io' : 'app.io'}`);
       ioInstance.to(dispute_id).emit("conversation_ended", {
         ended_by: req.user._id,
         status: "AI_SUMMARIZING",
         message: "Conversation ended. AI is generating summary...",
         timestamp: new Date()
       });
-      console.log(`[Controller] conversation_ended emit complete for dispute ${dispute_id}`);
-    } else {
-      console.warn('[WARN] No IO instance available to emit conversation_ended');
     }
 
-    // store dispute_id as string before setTimeout
     const disputeIdString = dispute_id;
 
     setTimeout(async () => {
       try {
-        // always refetch fresh from DB
         const freshDispute = await OfficialDispute.findById(disputeIdString);
         if (!freshDispute) {
           console.error("Dispute not found during summary generation");
           return;
         }
-        await generateAISummary(freshDispute, dispute_id, req.io);
+        await generateAISummary(freshDispute, disputeIdString, ioInstance);
       } catch (error) {
         console.error("Summary generation failed:", error);
-        if (req.io) {
-          req.io.to(disputeIdString).emit("summary_generation_failed", {
+        // generateAISummary already reverts status to CONVERSATION on failure
+        if (ioInstance) {
+          ioInstance.to(disputeIdString).emit("summary_generation_failed", {
             message: "Failed to generate summary. Please try again.",
             error: error.message
           });
@@ -515,37 +438,28 @@ export const endConversation = async (req, res) => {
       }
     }, 1000);
 
-    console.log(`[SUCCESS] Conversation ended for dispute ${dispute_id}, returning success response`);
     res.json({
       success: true,
       message: "Conversation ended. Generating AI summary...",
       status: "AI_SUMMARIZING"
     });
-    console.log(`[SUCCESS] HTTP response sent for dispute ${dispute_id}\n`);
-
   } catch (err) {
-    console.error(`[ERROR] End conversation failed for dispute ${req.body.dispute_id}:`, err.message);
+    console.error("End conversation error:", err);
     res.status(500).json({ message: "Failed to end conversation", error: err.message });
   }
 };
 
-// HELPER: GENERATE AI SUMMARY
+// ─────────────────────────────────────────────
+// AI HELPER: GENERATE SUMMARY
+// ─────────────────────────────────────────────
+
 export async function generateAISummary(dispute, dispute_id, io) {
   try {
-    console.log("Fetching messages for dispute:", dispute._id.toString());
-
-    const messages = await DisputeMessage.find({ 
-      dispute_id: dispute._id.toString()  // force string comparison
-    })
-      .populate('sender_id', 'firstName lastName email')
+    const messages = await DisputeMessage.find({ dispute_id: dispute._id.toString() })
+      .populate("sender_id", "firstName lastName email")
       .sort({ timestamp: 1 });
 
-    console.log(`Found ${messages.length} messages`);  // add this log
-
-    if (messages.length === 0) {
-      // don't throw — generate summary from intake data instead
-      console.log("No messages found, generating from context only");
-    }
+    console.log(`[generateAISummary] Found ${messages.length} messages for dispute ${dispute._id}`);
 
     let transcript = "";
     for (const msg of messages) {
@@ -560,7 +474,7 @@ export async function generateAISummary(dispute, dispute_id, io) {
     const prompt = `You are an expert conflict mediator analyzing a conversation between two people.
 
 CONTEXT:
-- Relationship: ${dispute.intake_data.relationship_type}${dispute.intake_data.custom_relationship ? ` (${dispute.intake_data.custom_relationship})` : ''}
+- Relationship: ${dispute.intake_data.relationship_type}${dispute.intake_data.custom_relationship ? ` (${dispute.intake_data.custom_relationship})` : ""}
 - Importance: ${dispute.intake_data.relationship_importance}
 - Goal: ${dispute.intake_data.goal}
 - Non-negotiables: ${dispute.intake_data.non_negotiables || "None specified"}
@@ -568,7 +482,7 @@ CONTEXT:
 - Urgency: ${dispute.intake_data.urgency}
 
 CONVERSATION TRANSCRIPT:
-${transcript}
+${transcript || "No messages exchanged — summarize based on context only."}
 
 TASK: Create a comprehensive, balanced summary of this conversation.
 
@@ -607,16 +521,19 @@ OUTPUT JSON:
         timestamp: new Date()
       });
     }
-
   } catch (error) {
-    console.error("Summary generation failed:", error);
+    console.error("generateAISummary failed:", error);
     dispute.status = "CONVERSATION";
     await dispute.save();
     throw error;
   }
 }
 
-// ENDPOINT 9: REPORT SUMMARY (Regenerate)
+// ─────────────────────────────────────────────
+// SCREEN 6: AI SUMMARY REVIEW
+// ─────────────────────────────────────────────
+
+// FIX: Added missing SUMMARY_REVIEW status guard
 export const reportSummary = async (req, res) => {
   try {
     const { dispute_id, feedback } = req.body;
@@ -627,6 +544,11 @@ export const reportSummary = async (req, res) => {
 
     const dispute = await OfficialDispute.findById(dispute_id);
     if (!dispute) return res.status(404).json({ message: "Dispute not found" });
+
+    // FIX: status guard was missing in original
+    if (dispute.status !== "SUMMARY_REVIEW") {
+      return res.status(400).json({ message: "Summary is not currently under review" });
+    }
 
     if (!dispute.ai_summary || !dispute.ai_summary.summary_text) {
       return res.status(400).json({ message: "No summary exists to regenerate" });
@@ -641,7 +563,7 @@ export const reportSummary = async (req, res) => {
     }
 
     dispute.status = "AI_SUMMARIZING";
-    dispute.ai_summary.regeneration_count++;
+    dispute.ai_summary.regeneration_count = (dispute.ai_summary.regeneration_count || 0) + 1;
     await dispute.save();
 
     if (req.io) {
@@ -652,33 +574,34 @@ export const reportSummary = async (req, res) => {
       });
     }
 
-    const messages = await DisputeMessage.find({ dispute_id })
-      .populate('sender_id', 'firstName lastName email')
-      .sort({ timestamp: 1 });
+    try {
+      const messages = await DisputeMessage.find({ dispute_id })
+        .populate("sender_id", "firstName lastName email")
+        .sort({ timestamp: 1 });
 
-    let transcript = "";
-    for (const msg of messages) {
-      const senderName = msg.sender_role === "creator" ? "Person A" : "Person B";
-      if (msg.message_type === "text") {
-        transcript += `${senderName}: ${msg.text_content}\n`;
-      } else {
-        transcript += `${senderName}: [Audio message - ${msg.audio_data?.duration || 30}s]\n`;
+      let transcript = "";
+      for (const msg of messages) {
+        const senderName = msg.sender_role === "creator" ? "Person A" : "Person B";
+        if (msg.message_type === "text") {
+          transcript += `${senderName}: ${msg.text_content}\n`;
+        } else {
+          transcript += `${senderName}: [Audio message - ${msg.audio_data?.duration || 30}s]\n`;
+        }
       }
-    }
 
-    const prompt = `You are a conflict mediator. You previously generated a summary, but a user reported an issue.
+      const prompt = `You are a conflict mediator. You previously generated a summary, but a user reported an issue.
 
 PREVIOUS SUMMARY:
 ${dispute.ai_summary.summary_text}
 
 PREVIOUS KEY POINTS:
-${dispute.ai_summary.key_points.map(kp => `- ${kp.point} (mentioned by: ${kp.mentioned_by})`).join('\n')}
+${dispute.ai_summary.key_points.map(kp => `- ${kp.point} (mentioned by: ${kp.mentioned_by})`).join("\n")}
 
 USER FEEDBACK:
 "${feedback.trim()}"
 
 ORIGINAL CONVERSATION:
-${transcript}
+${transcript || "No messages — use context only."}
 
 CONTEXT:
 - Relationship: ${dispute.intake_data.relationship_type}
@@ -697,47 +620,60 @@ OUTPUT JSON:
   ]
 }`;
 
-    const response = await callGemini(prompt);
-    const newSummary = cleanAIResponse(response);
+      const response = await callGemini(prompt);
+      const newSummary = cleanAIResponse(response);
 
-    dispute.ai_summary.summary_text = newSummary.summary_text;
-    dispute.ai_summary.key_points = newSummary.key_points;
-    dispute.ai_summary.generated_at = new Date();
-    dispute.status = "SUMMARY_REVIEW";
-    dispute.summary_approval.creator_approved = false;
-    dispute.summary_approval.joiner_approved = false;
-    await dispute.save();
+      dispute.ai_summary.summary_text = newSummary.summary_text;
+      dispute.ai_summary.key_points = newSummary.key_points;
+      dispute.ai_summary.generated_at = new Date();
+      dispute.status = "SUMMARY_REVIEW";
+      dispute.summary_approval.creator_approved = false;
+      dispute.summary_approval.joiner_approved = false;
+      await dispute.save();
 
-    if (req.io) {
-      req.io.to(dispute_id).emit("summary_updated", {
-        status: "SUMMARY_REVIEW",
+      if (req.io) {
+        req.io.to(dispute_id).emit("summary_updated", {
+          status: "SUMMARY_REVIEW",
+          summary: dispute.ai_summary,
+          message: "Summary has been regenerated based on feedback",
+          regeneration_count: dispute.ai_summary.regeneration_count,
+          timestamp: new Date()
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: "Summary regenerated successfully",
         summary: dispute.ai_summary,
-        message: "Summary has been regenerated based on feedback",
-        regeneration_count: dispute.ai_summary.regeneration_count,
-        timestamp: new Date()
+        regeneration_count: dispute.ai_summary.regeneration_count
       });
+    } catch (aiErr) {
+      dispute.status = "SUMMARY_REVIEW";
+      await dispute.save();
+      if (req.io) {
+        req.io.to(dispute_id).emit("summary_generation_failed", {
+          message: "Failed to regenerate summary. Please try again.",
+          error: aiErr.message
+        });
+      }
+      return res.status(500).json({ message: "Failed to regenerate summary", error: aiErr.message });
     }
-
-    res.json({
-      success: true,
-      message: "Summary regenerated successfully",
-      summary: dispute.ai_summary,
-      regeneration_count: dispute.ai_summary.regeneration_count
-    });
-
   } catch (err) {
     console.error("Report summary error:", err);
     res.status(500).json({ message: "Failed to regenerate summary", error: err.message });
   }
 };
 
-// ENDPOINT 10: APPROVE SUMMARY
 export const approveSummary = async (req, res) => {
   try {
     const { dispute_id } = req.body;
 
     const dispute = await OfficialDispute.findById(dispute_id);
     if (!dispute) return res.status(404).json({ message: "Dispute not found" });
+
+    if (dispute.status !== "SUMMARY_REVIEW") {
+      return res.status(400).json({ message: "Summary is not ready for approval" });
+    }
 
     const isCreator = dispute.creator_id.toString() === req.user._id.toString();
     const isJoiner = dispute.joiner_id?.toString() === req.user._id.toString();
@@ -746,16 +682,11 @@ export const approveSummary = async (req, res) => {
       return res.status(403).json({ message: "You are not authorized to approve this summary" });
     }
 
-    // Prevent duplicate approvals from the same user
     if (isCreator && dispute.summary_approval.creator_approved) {
       return res.status(400).json({ message: "You have already approved the summary" });
     }
     if (isJoiner && dispute.summary_approval.joiner_approved) {
       return res.status(400).json({ message: "You have already approved the summary" });
-    }
-
-    if (dispute.status !== "SUMMARY_REVIEW") {
-      return res.status(400).json({ message: "Summary is not ready for approval" });
     }
 
     if (isCreator) dispute.summary_approval.creator_approved = true;
@@ -775,22 +706,34 @@ export const approveSummary = async (req, res) => {
         });
       }
 
-      // store dispute_id as string before setTimeout
       const disputeIdString = dispute_id;
+      const ioInstance = req.io;
 
       setTimeout(async () => {
         try {
-          // always refetch fresh from DB
           const freshDispute = await OfficialDispute.findById(disputeIdString);
           if (!freshDispute) {
             console.error("Dispute not found during solution generation");
             return;
           }
-          await generateSolutions(freshDispute, dispute_id, req.io);
+          await generateSolutions(freshDispute, disputeIdString, ioInstance);
         } catch (error) {
           console.error("Solution generation failed:", error);
-          if (req.io) {
-            req.io.to(disputeIdString).emit("solution_generation_failed", {
+          // generateSolutions already reverts status & approvals internally.
+          // One extra defensive rollback in case the internal save also failed:
+          try {
+            const rollback = await OfficialDispute.findById(disputeIdString);
+            if (rollback && rollback.status === "AI_SUMMARIZING") {
+              rollback.status = "SUMMARY_REVIEW";
+              rollback.summary_approval.creator_approved = false;
+              rollback.summary_approval.joiner_approved = false;
+              await rollback.save();
+            }
+          } catch (rollbackErr) {
+            console.error("Failed to rollback after solution generation failure:", rollbackErr);
+          }
+          if (ioInstance) {
+            ioInstance.to(disputeIdString).emit("solution_generation_failed", {
               message: "Failed to generate solutions. Please try again.",
               error: error.message
             });
@@ -801,7 +744,7 @@ export const approveSummary = async (req, res) => {
       return res.json({
         success: true,
         message: "Both parties approved. Generating solution options...",
-        status: "Generating solutions"
+        status: "AI_SUMMARIZING"
       });
     }
 
@@ -820,20 +763,52 @@ export const approveSummary = async (req, res) => {
       creator_approved: dispute.summary_approval.creator_approved,
       joiner_approved: dispute.summary_approval.joiner_approved
     });
-
   } catch (err) {
     console.error("Approve summary error:", err);
     res.status(500).json({ message: "Failed to approve summary", error: err.message });
   }
 };
 
-// HELPER: GENERATE SOLUTIONS
+export const getAISummary = async (req, res) => {
+  try {
+    const { dispute_id } = req.body;
+
+    if (!dispute_id) {
+      return res.status(400).json({ message: "dispute_id is required" });
+    }
+
+    const dispute = await OfficialDispute.findById(dispute_id);
+    if (!dispute) return res.status(404).json({ message: "Dispute not found" });
+
+    const isParticipant =
+      dispute.creator_id.toString() === req.user._id.toString() ||
+      dispute.joiner_id?.toString() === req.user._id.toString();
+
+    if (!isParticipant) {
+      return res.status(403).json({ message: "You are not authorized to view this dispute" });
+    }
+
+    if (!dispute.ai_summary || !dispute.ai_summary.summary_text) {
+      return res.status(404).json({ message: "No summary available for this dispute" });
+    }
+
+    res.json({ success: true, data: dispute.ai_summary, timestamp: new Date() });
+  } catch (err) {
+    console.error("Get summary error:", err);
+    res.status(500).json({ message: "Failed to retrieve summary", error: err.message });
+  }
+};
+
+// ─────────────────────────────────────────────
+// AI HELPER: GENERATE SOLUTIONS
+// ─────────────────────────────────────────────
+
 async function generateSolutions(dispute, dispute_id, io) {
   try {
     const prompt = `You are a conflict resolution expert generating solution options.
 
 CONTEXT:
-- Relationship: ${dispute.intake_data.relationship_type}${dispute.intake_data.custom_relationship ? ` (${dispute.intake_data.custom_relationship})` : ''}
+- Relationship: ${dispute.intake_data.relationship_type}${dispute.intake_data.custom_relationship ? ` (${dispute.intake_data.custom_relationship})` : ""}
 - Relationship Importance: ${dispute.intake_data.relationship_importance}
 - Goal: ${dispute.intake_data.goal}
 - Non-negotiables: ${dispute.intake_data.non_negotiables || "None"}
@@ -843,7 +818,7 @@ CONVERSATION SUMMARY:
 ${dispute.ai_summary.summary_text}
 
 KEY POINTS FROM DISCUSSION:
-${dispute.ai_summary.key_points.map(kp => `- ${kp.point} (${kp.mentioned_by})`).join('\n')}
+${dispute.ai_summary.key_points.map(kp => `- ${kp.point} (${kp.mentioned_by})`).join("\n")}
 
 TASK: Generate 3-5 possible solution options labeled A, B, C, D, E.
 
@@ -894,20 +869,144 @@ OUTPUT JSON:
         timestamp: new Date()
       });
     }
-
   } catch (error) {
-    console.error("Solution generation failed:", error);
+    console.error("generateSolutions failed:", error);
     dispute.status = "SUMMARY_REVIEW";
+    dispute.summary_approval.creator_approved = false;
+    dispute.summary_approval.joiner_approved = false;
     await dispute.save();
     throw error;
   }
+}
+
+// SCREEN 7: SOLUTIONS SELECTION
+
+export const getSolutions = async (req, res) => {
+  try {
+    const { dispute_id } = req.params;
+
+    const dispute = await OfficialDispute.findById(dispute_id);
+    if (!dispute) return res.status(404).json({ message: "Dispute not found" });
+
+    const isParticipant =
+      dispute.creator_id.toString() === req.user._id.toString() ||
+      dispute.joiner_id?.toString() === req.user._id.toString();
+
+    if (!isParticipant) return res.status(403).json({ message: "Not authorized" });
+
+    if (!dispute.solutions || dispute.solutions.length === 0) {
+      return res.status(404).json({ message: "Solutions not generated yet" });
+    }
+
+    res.json({ success: true, solutions: dispute.solutions, status: dispute.status });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to fetch solutions", error: err.message });
+  }
 };
 
-// HELPER: GENERATE SUGGESTED PLAN AFTER SOLUTION SELECTION
+export const selectSolutions = async (req, res) => {
+  try {
+    const { dispute_id, selected_solution_ids } = req.body;
+
+    if (!Array.isArray(selected_solution_ids) || selected_solution_ids.length === 0) {
+      return res.status(400).json({ message: "Please select at least one solution" });
+    }
+
+    const dispute = await OfficialDispute.findById(dispute_id);
+    if (!dispute) return res.status(404).json({ message: "Dispute not found" });
+
+    if (dispute.status !== "OPTIONS_SELECTION") {
+      return res.status(400).json({ message: "Not in solution selection phase" });
+    }
+
+    const isCreator = dispute.creator_id.toString() === req.user._id.toString();
+    const isJoiner = dispute.joiner_id?.toString() === req.user._id.toString();
+
+    if (!isCreator && !isJoiner) {
+      return res.status(403).json({ message: "You are not authorized to select solutions" });
+    }
+
+    const validSolutionIds = dispute.solutions.map(s => s.id);
+    const invalidSelections = selected_solution_ids.filter(id => !validSolutionIds.includes(id));
+    if (invalidSelections.length > 0) {
+      return res.status(400).json({ message: `Invalid solution IDs: ${invalidSelections.join(", ")}` });
+    }
+
+    if (isCreator) dispute.solution_selections.creator_selected = selected_solution_ids;
+    else dispute.solution_selections.joiner_selected = selected_solution_ids;
+
+    await dispute.save();
+
+    const creatorVotes = dispute.solution_selections.creator_selected;
+    const joinerVotes = dispute.solution_selections.joiner_selected;
+
+    if (creatorVotes.length > 0 && joinerVotes.length > 0) {
+      dispute.status = "AI_SUMMARIZING";
+      await dispute.save();
+
+      if (req.io) {
+        req.io.to(dispute_id).emit("generating_suggested_plan", {
+          status: "AI_SUMMARIZING",
+          creator_selections: creatorVotes,
+          joiner_selections: joinerVotes,
+          message: "Both parties have selected. AI is generating a suggested resolution plan...",
+          timestamp: new Date()
+        });
+      }
+
+      const disputeIdString = dispute._id.toString();
+      const ioInstance = req.io;
+
+      setTimeout(async () => {
+        try {
+          const freshDispute = await OfficialDispute.findById(disputeIdString);
+          if (!freshDispute) return;
+          await generateSuggestedPlan(freshDispute, ioInstance);
+        } catch (error) {
+          console.error("Suggested plan generation failed:", error);
+          if (ioInstance) {
+            ioInstance.to(disputeIdString).emit("suggested_plan_failed", {
+              message: "Failed to generate suggested plan. Please try again.",
+              error: error.message
+            });
+          }
+        }
+      }, 1000);
+
+      return res.json({
+        success: true,
+        message: "Both parties have selected. Generating suggested plan...",
+        status: "AI_SUMMARIZING",
+        creator_selections: creatorVotes,
+        joiner_selections: joinerVotes
+      });
+    }
+
+    if (req.io) {
+      req.io.to(dispute_id).emit("selection_update", {
+        message: "Selection recorded. Waiting for other party.",
+        has_creator_selected: creatorVotes.length > 0,
+        has_joiner_selected: joinerVotes.length > 0,
+        timestamp: new Date()
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "Selection recorded. Waiting for other party.",
+      your_selections: selected_solution_ids,
+      waiting_for_other: true
+    });
+  } catch (err) {
+    console.error("Select solutions error:", err);
+    res.status(500).json({ message: "Failed to select solutions", error: err.message });
+  }
+};
+
+// AI HELPER: GENERATE SUGGESTED PLAN
+
 async function generateSuggestedPlan(dispute, io) {
   try {
-    console.log("Generating suggested plan for dispute:", dispute._id);
-
     const creatorSelectedSolutions = dispute.solutions.filter(s =>
       dispute.solution_selections.creator_selected.includes(s.id)
     );
@@ -918,7 +1017,7 @@ async function generateSuggestedPlan(dispute, io) {
     const prompt = `You are a professional conflict resolution expert. Based on the solutions both parties selected, generate a suggested resolution plan.
 
 CONTEXT:
-- Relationship: ${dispute.intake_data.relationship_type}${dispute.intake_data.custom_relationship ? ` (${dispute.intake_data.custom_relationship})` : ''}
+- Relationship: ${dispute.intake_data.relationship_type}${dispute.intake_data.custom_relationship ? ` (${dispute.intake_data.custom_relationship})` : ""}
 - Relationship Importance: ${dispute.intake_data.relationship_importance}
 - Goal: ${dispute.intake_data.goal}
 - Non-negotiables: ${dispute.intake_data.non_negotiables || "None"}
@@ -927,10 +1026,10 @@ ORIGINAL DISPUTE SUMMARY:
 ${dispute.ai_summary.summary_text}
 
 PERSON A (Creator) selected these solutions:
-${creatorSelectedSolutions.map(s => `- Option ${s.id}: ${s.title} — ${s.description}`).join('\n')}
+${creatorSelectedSolutions.map(s => `- Option ${s.id}: ${s.title} — ${s.description}`).join("\n")}
 
 PERSON B (Joiner) selected these solutions:
-${joinerSelectedSolutions.map(s => `- Option ${s.id}: ${s.title} — ${s.description}`).join('\n')}
+${joinerSelectedSolutions.map(s => `- Option ${s.id}: ${s.title} — ${s.description}`).join("\n")}
 
 TASK: Create a fair suggested resolution plan that balances both parties' selected solutions. This is a SUGGESTION — both parties will review it and can either accept it or negotiate further.
 
@@ -956,24 +1055,14 @@ OUTPUT JSON:
 }`;
 
     const response = await callGemini(prompt);
-    console.log("=== RAW GEMINI SUGGESTED PLAN RESPONSE ===");
-    console.log(response);
-    console.log("==========================================");
-
     const result = cleanAIResponse(response);
 
     if (!result.suggested_plan || !result.suggested_plan.title || !result.suggested_plan.action_steps) {
       throw new Error("Invalid suggested plan structure from AI");
     }
 
-    dispute.suggested_plan = {
-      ...result.suggested_plan,
-      generated_at: new Date()
-    };
-    dispute.suggested_plan_approval = {
-      creator_approved: false,
-      joiner_approved: false
-    };
+    dispute.suggested_plan = { ...result.suggested_plan, generated_at: new Date() };
+    dispute.suggested_plan_approval = { creator_approved: false, joiner_approved: false };
     dispute.status = "SUGGESTED_PLAN_REVIEW";
     await dispute.save();
 
@@ -987,119 +1076,16 @@ OUTPUT JSON:
     }
 
     console.log("Suggested plan generated for dispute:", dispute._id);
-
   } catch (error) {
-    console.error("Suggested plan generation failed:", error);
+    console.error("generateSuggestedPlan failed:", error);
     dispute.status = "OPTIONS_SELECTION";
     await dispute.save();
     throw error;
   }
 }
 
-// ENDPOINT: SELECT SOLUTIONS
-// After both select, generate suggested plan → SUGGESTED_PLAN_REVIEW
-export const selectSolutions = async (req, res) => {
-  try {
-    const { dispute_id, selected_solution_ids } = req.body;
+// SUGGESTED PLAN REVIEW
 
-    // 1. Validation (Your Code)
-    if (!Array.isArray(selected_solution_ids) || selected_solution_ids.length === 0) {
-      return res.status(400).json({ message: "Please select at least one solution" });
-    }
-
-    const dispute = await OfficialDispute.findById(dispute_id);
-    if (!dispute) return res.status(404).json({ message: "Dispute not found" });
-
-    if (dispute.status !== "OPTIONS_SELECTION") {
-      return res.status(400).json({ message: "Not in solution selection phase" });
-    }
-
-    const isCreator = dispute.creator_id.toString() === req.user._id.toString();
-    const isJoiner = dispute.joiner_id?.toString() === req.user._id.toString();
-
-    if (!isCreator && !isJoiner) {
-      return res.status(403).json({ message: "You are not authorized to select solutions" });
-    }
-
-    const validSolutionIds = dispute.solutions.map(s => s.id);
-    const invalidSelections = selected_solution_ids.filter(id => !validSolutionIds.includes(id));
-    if (invalidSelections.length > 0) {
-      return res.status(400).json({ message: `Invalid solution IDs: ${invalidSelections.join(', ')}` });
-    }
-
-    if (isCreator) dispute.solution_selections.creator_selected = selected_solution_ids;
-    else dispute.solution_selections.joiner_selected = selected_solution_ids;
-
-    await dispute.save();
-
-    const creatorVotes = dispute.solution_selections.creator_selected;
-    const joinerVotes = dispute.solution_selections.joiner_selected;
-
-    // Both have selected — generate suggested plan first
-    if (creatorVotes.length > 0 && joinerVotes.length > 0) {
-      dispute.status = "AI_SUMMARIZING";
-      await dispute.save();
-
-      if (req.io) {
-        req.io.to(dispute_id).emit("generating_suggested_plan", {
-          status: "AI_SUMMARIZING",
-          creator_selections: creatorVotes,
-          joiner_selections: joinerVotes,
-          message: "Both parties have selected. AI is generating a suggested resolution plan...",
-          timestamp: new Date()
-        });
-      }
-
-      const disputeIdString = dispute._id.toString();
-      setTimeout(async () => {
-        try {
-          const freshDispute = await OfficialDispute.findById(disputeIdString);
-          if (!freshDispute) return;
-          await generateSuggestedPlan(freshDispute, req.io);
-        } catch (error) {
-          console.error("Suggested plan generation failed:", error);
-          if (req.io) {
-            req.io.to(disputeIdString).emit("suggested_plan_failed", {
-              message: "Failed to generate suggested plan. Please try again.",
-              error: error.message
-            });
-          }
-        }
-      }, 1000);
-
-      return res.json({
-        success: true,
-        message: "Both parties have selected. Generating suggested plan...",
-        status: "AI_SUMMARIZING",
-        creator_selections: creatorVotes,
-        joiner_selections: joinerVotes
-      });
-    }
-
-    // Still waiting for the other party
-    if (req.io) {
-      req.io.to(dispute_id).emit("selection_update", {
-        message: "Selection recorded. Waiting for other party.",
-        has_creator_selected: creatorVotes.length > 0,
-        has_joiner_selected: joinerVotes.length > 0,
-        timestamp: new Date()
-      });
-    }
-
-    res.json({
-      success: true,
-      message: "Selection recorded. Waiting for other party.",
-      your_selections: selected_solution_ids,
-      waiting_for_other: true
-    });
-
-  } catch (err) {
-    console.error("Select solutions error:", err);
-    res.status(500).json({ message: "Failed to select solutions", error: err.message });
-  }
-};
-
-// ENDPOINT: GET SUGGESTED PLAN
 export const getSuggestedPlan = async (req, res) => {
   try {
     const { dispute_id } = req.params;
@@ -1131,15 +1117,12 @@ export const getSuggestedPlan = async (req, res) => {
           : dispute.suggested_plan_approval?.joiner_approved
       }
     });
-
   } catch (err) {
     console.error("Get suggested plan error:", err);
     res.status(500).json({ message: "Failed to fetch suggested plan", error: err.message });
   }
 };
 
-// ENDPOINT: ACCEPT SUGGESTED PLAN
-// Both accept → COMPLETED (skip negotiation entirely)
 export const acceptSuggestedPlan = async (req, res) => {
   try {
     const { dispute_id } = req.body;
@@ -1158,7 +1141,6 @@ export const acceptSuggestedPlan = async (req, res) => {
       return res.status(403).json({ message: "Not a participant" });
     }
 
-    // Prevent double approval
     if (isCreator && dispute.suggested_plan_approval?.creator_approved) {
       return res.status(400).json({ message: "You have already accepted the plan" });
     }
@@ -1171,17 +1153,11 @@ export const acceptSuggestedPlan = async (req, res) => {
 
     await dispute.save();
 
-    // Both accepted — complete the dispute directly, no negotiation needed
     if (dispute.suggested_plan_approval.creator_approved && dispute.suggested_plan_approval.joiner_approved) {
       dispute.status = "COMPLETED";
       dispute.completed_at = new Date();
-
-      // Copy suggested plan as final plan
       dispute.final_plan = dispute.suggested_plan;
-      dispute.final_plan_approval = {
-        creator_approved: true,
-        joiner_approved: true
-      };
+      dispute.final_plan_approval = { creator_approved: true, joiner_approved: true };
       await dispute.save();
 
       if (req.io) {
@@ -1201,7 +1177,6 @@ export const acceptSuggestedPlan = async (req, res) => {
       });
     }
 
-    // Waiting for the other party
     if (req.io) {
       req.io.to(dispute_id).emit("suggested_plan_approval_update", {
         creator_approved: dispute.suggested_plan_approval.creator_approved,
@@ -1217,15 +1192,12 @@ export const acceptSuggestedPlan = async (req, res) => {
       creator_approved: dispute.suggested_plan_approval.creator_approved,
       joiner_approved: dispute.suggested_plan_approval.joiner_approved
     });
-
   } catch (err) {
     console.error("Accept suggested plan error:", err);
     res.status(500).json({ message: "Failed to accept plan", error: err.message });
   }
 };
 
-// ENDPOINT: REJECT SUGGESTED PLAN → START NEGOTIATION
-// Either party can reject → moves to NEGOTIATION phase
 export const rejectSuggestedPlan = async (req, res) => {
   try {
     const { dispute_id, reason } = req.body;
@@ -1245,15 +1217,9 @@ export const rejectSuggestedPlan = async (req, res) => {
 
     const isCreator = dispute.creator_id.toString() === req.user._id.toString();
 
-    // Reset approvals and move to negotiation
-    dispute.suggested_plan_approval = {
-      creator_approved: false,
-      joiner_approved: false
-    };
+    dispute.suggested_plan_approval = { creator_approved: false, joiner_approved: false };
     dispute.status = "NEGOTIATION";
     await dispute.save();
-
-    console.log(`Suggested plan rejected by ${isCreator ? "creator" : "joiner"}, starting negotiation`);
 
     if (req.io) {
       req.io.to(dispute_id).emit("negotiation_started", {
@@ -1274,15 +1240,14 @@ export const rejectSuggestedPlan = async (req, res) => {
       status: "NEGOTIATION",
       rejected_by: isCreator ? "creator" : "joiner"
     });
-
   } catch (err) {
     console.error("Reject suggested plan error:", err);
     res.status(500).json({ message: "Failed to reject plan", error: err.message });
   }
 };
 
-// ENDPOINT: POST A NEGOTIATION COMMENT
-// Either participant can comment freely during NEGOTIATION phase
+// SCREEN 8: NEGOTIATION
+
 export const postNegotiationComment = async (req, res) => {
   try {
     const { dispute_id, text } = req.body;
@@ -1307,23 +1272,19 @@ export const postNegotiationComment = async (req, res) => {
 
     const senderRole = isCreator ? "creator" : "joiner";
 
-    const comment = {
+    dispute.negotiation.comments.push({
       sender_id: req.user._id,
       sender_role: senderRole,
       text: text.trim(),
       timestamp: new Date()
-    };
+    });
 
-    dispute.negotiation.comments.push(comment);
-
-    // Reset "ready" flags when someone adds a new comment —
-    // both sides must re-confirm agreement after each new message
+    // Reset ready flags — both must re-confirm after each new message
     dispute.negotiation.creator_ready = false;
     dispute.negotiation.joiner_ready = false;
 
     await dispute.save();
 
-    // Populate sender info for socket broadcast
     const savedComment = dispute.negotiation.comments[dispute.negotiation.comments.length - 1];
 
     if (req.io) {
@@ -1345,15 +1306,42 @@ export const postNegotiationComment = async (req, res) => {
       creator_ready: dispute.negotiation.creator_ready,
       joiner_ready: dispute.negotiation.joiner_ready
     });
-
   } catch (err) {
     console.error("Post negotiation comment error:", err);
     res.status(500).json({ message: "Failed to post comment", error: err.message });
   }
 };
 
-// ENDPOINT: SIGNAL AGREEMENT (I'm ready to generate the final plan)
-// When BOTH parties signal ready, the AI generates the final plan
+export const getNegotiationComments = async (req, res) => {
+  try {
+    const { dispute_id } = req.params;
+
+    const dispute = await OfficialDispute.findById(dispute_id)
+      .populate("negotiation.comments.sender_id", "firstName lastName email");
+
+    if (!dispute) return res.status(404).json({ message: "Dispute not found" });
+
+    const isParticipant =
+      dispute.creator_id.toString() === req.user._id.toString() ||
+      dispute.joiner_id?.toString() === req.user._id.toString();
+
+    if (!isParticipant) {
+      return res.status(403).json({ message: "You are not authorized to view these comments" });
+    }
+
+    res.json({
+      success: true,
+      comments: dispute.negotiation.comments,
+      creator_ready: dispute.negotiation.creator_ready,
+      joiner_ready: dispute.negotiation.joiner_ready,
+      count: dispute.negotiation.comments.length
+    });
+  } catch (err) {
+    console.error("Get negotiation comments error:", err);
+    res.status(500).json({ message: "Failed to fetch comments", error: err.message });
+  }
+};
+
 export const signalAgreement = async (req, res) => {
   try {
     const { dispute_id } = req.body;
@@ -1377,7 +1365,6 @@ export const signalAgreement = async (req, res) => {
 
     await dispute.save();
 
-    // Both are ready — generate the final AI plan
     if (dispute.negotiation.creator_ready && dispute.negotiation.joiner_ready) {
       dispute.status = "AI_SUMMARIZING";
       await dispute.save();
@@ -1390,28 +1377,22 @@ export const signalAgreement = async (req, res) => {
         });
       }
 
-      // store dispute_id as string before setTimeout
       const disputeIdString = dispute_id;
+      const ioInstance = req.io;
 
       setTimeout(async () => {
         try {
-          // always refetch fresh from DB
           const freshDispute = await OfficialDispute.findById(disputeIdString);
           if (!freshDispute) {
             console.error("Dispute not found during final plan generation");
             return;
           }
-          await generateFinalPlan(freshDispute, dispute_id, req.io);
+          await generateFinalPlan(freshDispute, disputeIdString, ioInstance);
         } catch (error) {
           console.error("Final plan generation failed:", error);
-          // refetch and reset status
-          const freshDispute = await OfficialDispute.findById(disputeIdString);
-          if (freshDispute) {
-            freshDispute.status = "NEGOTIATION";
-            await freshDispute.save();
-          }
-          if (req.io) {
-            req.io.to(disputeIdString).emit("final_plan_failed", {
+          // generateFinalPlan reverts status to NEGOTIATION internally
+          if (ioInstance) {
+            ioInstance.to(disputeIdString).emit("final_plan_failed", {
               message: "Failed to generate final plan. Please try again.",
               error: error.message
             });
@@ -1426,7 +1407,6 @@ export const signalAgreement = async (req, res) => {
       });
     }
 
-    // Still waiting for the other party
     if (req.io) {
       req.io.to(dispute_id).emit("agreement_update", {
         creator_ready: dispute.negotiation.creator_ready,
@@ -1442,51 +1422,16 @@ export const signalAgreement = async (req, res) => {
       creator_ready: dispute.negotiation.creator_ready,
       joiner_ready: dispute.negotiation.joiner_ready
     });
-
   } catch (err) {
     console.error("Signal agreement error:", err);
     res.status(500).json({ message: "Failed to signal agreement", error: err.message });
   }
 };
 
-// ENDPOINT: GET NEGOTIATION COMMENTS
-export const getNegotiationComments = async (req, res) => {
+// AI HELPER: GENERATE FINAL PLAN (FIX: now exported)
+
+export async function generateFinalPlan(dispute, dispute_id, io) {
   try {
-    const { dispute_id } = req.params;
-
-    const dispute = await OfficialDispute.findById(dispute_id)
-      .populate('negotiation.comments.sender_id', 'firstName lastName email');
-
-    if (!dispute) return res.status(404).json({ message: "Dispute not found" });
-
-    const isParticipant =
-      dispute.creator_id.toString() === req.user._id.toString() ||
-      dispute.joiner_id?.toString() === req.user._id.toString();
-
-    if (!isParticipant) {
-      return res.status(403).json({ message: "You are not authorized to view these comments" });
-    }
-
-    res.json({
-      success: true,
-      comments: dispute.negotiation.comments,
-      creator_ready: dispute.negotiation.creator_ready,
-      joiner_ready: dispute.negotiation.joiner_ready,
-      count: dispute.negotiation.comments.length
-    });
-
-  } catch (err) {
-    console.error("Get negotiation comments error:", err);
-    res.status(500).json({ message: "Failed to fetch comments", error: err.message });
-  }
-};
-
-// HELPER: GENERATE FINAL PLAN FROM NEGOTIATION
-async function generateFinalPlan(dispute, dispute_id, io) {
-  try {
-    console.log("Generating final plan for dispute:", dispute._id);
-
-    // Build context from selected solutions
     const creatorSelectedSolutions = dispute.solutions.filter(s =>
       dispute.solution_selections.creator_selected.includes(s.id)
     );
@@ -1494,15 +1439,14 @@ async function generateFinalPlan(dispute, dispute_id, io) {
       dispute.solution_selections.joiner_selected.includes(s.id)
     );
 
-    // Build negotiation thread
     const negotiationThread = dispute.negotiation.comments
       .map(c => `${c.sender_role === "creator" ? "Person A" : "Person B"}: ${c.text}`)
-      .join('\n');
+      .join("\n");
 
     const prompt = `You are a professional conflict resolution expert constructing a final binding resolution plan.
 
 CONTEXT:
-- Relationship: ${dispute.intake_data.relationship_type}${dispute.intake_data.custom_relationship ? ` (${dispute.intake_data.custom_relationship})` : ''}
+- Relationship: ${dispute.intake_data.relationship_type}${dispute.intake_data.custom_relationship ? ` (${dispute.intake_data.custom_relationship})` : ""}
 - Relationship Importance: ${dispute.intake_data.relationship_importance}
 - Goal: ${dispute.intake_data.goal}
 - Non-negotiables: ${dispute.intake_data.non_negotiables || "None"}
@@ -1511,15 +1455,15 @@ ORIGINAL DISPUTE SUMMARY:
 ${dispute.ai_summary.summary_text}
 
 PERSON A (Creator) preferred these solutions:
-${creatorSelectedSolutions.map(s => `- Option ${s.id}: ${s.title} — ${s.description}`).join('\n')}
+${creatorSelectedSolutions.map(s => `- Option ${s.id}: ${s.title} — ${s.description}`).join("\n")}
 
 PERSON B (Joiner) preferred these solutions:
-${joinerSelectedSolutions.map(s => `- Option ${s.id}: ${s.title} — ${s.description}`).join('\n')}
+${joinerSelectedSolutions.map(s => `- Option ${s.id}: ${s.title} — ${s.description}`).join("\n")}
 
 NEGOTIATION DISCUSSION:
 ${negotiationThread || "No additional comments were made — both parties agreed directly."}
 
-TASK: Based on everything above, construct a clear, fair, and actionable final resolution plan that both parties have agreed to. The plan should reflect the negotiation discussion and balance both parties' preferred solutions.
+TASK: Based on everything above, construct a clear, fair, and actionable final resolution plan that both parties have agreed to.
 
 OUTPUT JSON:
 {
@@ -1563,18 +1507,16 @@ OUTPUT JSON:
     }
 
     console.log("Final plan generated for dispute:", dispute._id);
-
   } catch (error) {
-    console.error("Final plan generation failed:", error);
+    console.error("generateFinalPlan failed:", error);
     dispute.status = "NEGOTIATION";
     await dispute.save();
     throw error;
   }
 }
 
-// ENDPOINT: APPROVE FINAL PLAN
-// Both must approve → dispute COMPLETED
-// Either can report an issue → stored for feedback but dispute still COMPLETED
+// SCREEN 9: FINAL PLAN REVIEW
+
 export const approveFinalPlan = async (req, res) => {
   try {
     const { dispute_id } = req.body;
@@ -1593,12 +1535,18 @@ export const approveFinalPlan = async (req, res) => {
       return res.status(403).json({ message: "You are not authorized to approve this plan" });
     }
 
+    if (isCreator && dispute.final_plan_approval.creator_approved) {
+      return res.status(400).json({ message: "You have already approved the final plan" });
+    }
+    if (isJoiner && dispute.final_plan_approval.joiner_approved) {
+      return res.status(400).json({ message: "You have already approved the final plan" });
+    }
+
     if (isCreator) dispute.final_plan_approval.creator_approved = true;
     else dispute.final_plan_approval.joiner_approved = true;
 
     await dispute.save();
 
-    // Both approved — complete the dispute
     if (dispute.final_plan_approval.creator_approved && dispute.final_plan_approval.joiner_approved) {
       dispute.status = "COMPLETED";
       dispute.completed_at = new Date();
@@ -1621,7 +1569,6 @@ export const approveFinalPlan = async (req, res) => {
       });
     }
 
-    // Waiting for the other party
     if (req.io) {
       req.io.to(dispute_id).emit("plan_approval_update", {
         creator_approved: dispute.final_plan_approval.creator_approved,
@@ -1637,15 +1584,12 @@ export const approveFinalPlan = async (req, res) => {
       creator_approved: dispute.final_plan_approval.creator_approved,
       joiner_approved: dispute.final_plan_approval.joiner_approved
     });
-
   } catch (err) {
     console.error("Approve final plan error:", err);
     res.status(500).json({ message: "Failed to approve final plan", error: err.message });
   }
 };
 
-// ENDPOINT: REPORT ISSUE WITH FINAL PLAN
-// Saves feedback for future development but marks the dispute as completed anyway
 export const reportFinalPlanIssue = async (req, res) => {
   try {
     const { dispute_id, feedback } = req.body;
@@ -1668,7 +1612,6 @@ export const reportFinalPlanIssue = async (req, res) => {
       return res.status(403).json({ message: "You are not a participant of this dispute" });
     }
 
-    // Store the report for future development reference
     dispute.final_plan_reports.push({
       reporter_id: req.user._id,
       reporter_role: isCreator ? "creator" : "joiner",
@@ -1676,11 +1619,10 @@ export const reportFinalPlanIssue = async (req, res) => {
       reported_at: new Date()
     });
 
-    // Also approve on behalf of this user so the dispute can complete
+    // Counts as implicit approval so the dispute can still complete
     if (isCreator) dispute.final_plan_approval.creator_approved = true;
     else dispute.final_plan_approval.joiner_approved = true;
 
-    // If both have now either approved or reported, complete the dispute
     if (dispute.final_plan_approval.creator_approved && dispute.final_plan_approval.joiner_approved) {
       dispute.status = "COMPLETED";
       dispute.completed_at = new Date();
@@ -1702,24 +1644,60 @@ export const reportFinalPlanIssue = async (req, res) => {
       message: "Issue reported. Thank you for your feedback. The dispute has been marked as resolved.",
       status: dispute.status
     });
-
   } catch (err) {
     console.error("Report final plan issue error:", err);
     res.status(500).json({ message: "Failed to report issue", error: err.message });
   }
 };
 
-// ENDPOINT 12: GET DISPUTE STATUS
+export const getFinalPlan = async (req, res) => {
+  try {
+    const { dispute_id } = req.params;
+
+    const dispute = await OfficialDispute.findById(dispute_id);
+    if (!dispute) return res.status(404).json({ message: "Dispute not found" });
+
+    const isCreator = dispute.creator_id.toString() === req.user._id.toString();
+    const isJoiner = dispute.joiner_id?.toString() === req.user._id.toString();
+
+    if (!isCreator && !isJoiner) {
+      return res.status(403).json({ message: "You are not authorized to view this plan" });
+    }
+
+    if (!dispute.final_plan || !dispute.final_plan.title) {
+      return res.status(404).json({ message: "Final plan not generated yet" });
+    }
+
+    res.json({
+      success: true,
+      status: dispute.status,
+      final_plan: dispute.final_plan,
+      approval: {
+        creator_approved: dispute.final_plan_approval?.creator_approved || false,
+        joiner_approved: dispute.final_plan_approval?.joiner_approved || false,
+        your_approval: isCreator
+          ? dispute.final_plan_approval?.creator_approved
+          : dispute.final_plan_approval?.joiner_approved
+      }
+    });
+  } catch (err) {
+    console.error("Get final plan error:", err);
+    res.status(500).json({ message: "Failed to fetch final plan", error: err.message });
+  }
+};
+
+// GENERAL ENDPOINTS
+
 export const getDisputeStatus = async (req, res) => {
   try {
     const { dispute_id } = req.params;
 
     const dispute = await OfficialDispute.findById(dispute_id)
-      .populate('creator_id', 'firstName lastName email')
-      .populate('joiner_id', 'firstName lastName email')
+      .populate("creator_id", "firstName lastName email")
+      .populate("joiner_id", "firstName lastName email")
       .populate({
-        path: 'conversation.messages',
-        populate: { path: 'sender_id', select: 'firstName lastName email' }
+        path: "conversation.messages",
+        populate: { path: "sender_id", select: "firstName lastName email" }
       });
 
     if (!dispute) return res.status(404).json({ message: "Dispute not found" });
@@ -1738,46 +1716,35 @@ export const getDisputeStatus = async (req, res) => {
       is_creator: isCreator,
       is_joiner: isJoiner
     });
-
   } catch (err) {
     console.error("Get dispute status error:", err);
     res.status(500).json({ message: "Failed to fetch dispute", error: err.message });
   }
 };
 
-// ENDPOINT 13: GET USER'S DISPUTES
 export const getUserDisputes = async (req, res) => {
   try {
     const { status, limit = 50 } = req.query;
 
     const query = {
-      $or: [
-        { creator_id: req.user._id },
-        { joiner_id: req.user._id }
-      ]
+      $or: [{ creator_id: req.user._id }, { joiner_id: req.user._id }]
     };
 
     if (status) query.status = status;
 
     const disputes = await OfficialDispute.find(query)
-      .populate('creator_id', 'firstName lastName email')
-      .populate('joiner_id', 'firstName lastName email')
+      .populate("creator_id", "firstName lastName email")
+      .populate("joiner_id", "firstName lastName email")
       .sort({ updatedAt: -1 })
       .limit(parseInt(limit));
 
-    res.json({
-      success: true,
-      count: disputes.length,
-      disputes
-    });
-
+    res.json({ success: true, count: disputes.length, disputes });
   } catch (err) {
     console.error("Get user disputes error:", err);
     res.status(500).json({ message: "Failed to fetch disputes", error: err.message });
   }
 };
 
-// ENDPOINT 14: DELETE DISPUTE
 export const deleteDispute = async (req, res) => {
   try {
     const { dispute_id } = req.params;
@@ -1793,14 +1760,11 @@ export const deleteDispute = async (req, res) => {
       return res.status(400).json({ message: "Cannot delete completed disputes" });
     }
 
-    const messages = await DisputeMessage.find({ dispute_id, message_type: "audio" });
-    for (const msg of messages) {
+    const audioMessages = await DisputeMessage.find({ dispute_id, message_type: "audio" });
+    for (const msg of audioMessages) {
       if (msg.audio_data?.file_path && fs.existsSync(msg.audio_data.file_path)) {
-        try {
-          fs.unlinkSync(msg.audio_data.file_path);
-        } catch (err) {
-          console.error(`Failed to delete audio file: ${msg.audio_data.file_path}`, err);
-        }
+        try { fs.unlinkSync(msg.audio_data.file_path); }
+        catch (e) { console.error(`Failed to delete audio file: ${msg.audio_data.file_path}`, e); }
       }
     }
 
@@ -1815,47 +1779,8 @@ export const deleteDispute = async (req, res) => {
     }
 
     res.json({ success: true, message: "Dispute deleted successfully" });
-
   } catch (err) {
     console.error("Delete dispute error:", err);
     res.status(500).json({ message: "Failed to delete dispute", error: err.message });
-  }
-};
-
-// ENDPOINT: GET AI SUMMARY
-export const getAISummary = async (req, res) => {
-  try {
-    const { dispute_id } = req.body;
-
-    if (!dispute_id) {
-      return res.status(400).json({ message: "dispute_id is required" });
-    }
-
-    const dispute = await OfficialDispute.findById(dispute_id);
-    if (!dispute) {
-      return res.status(404).json({ message: "Dispute not found" });
-    }
-
-    const isParticipant =
-      dispute.creator_id.toString() === req.user._id.toString() ||
-      dispute.joiner_id?.toString() === req.user._id.toString();
-
-    if (!isParticipant) {
-      return res.status(403).json({ message: "You are not authorized to view this dispute" });
-    }
-
-    if (!dispute.ai_summary || !dispute.ai_summary.summary_text) {
-      return res.status(404).json({ message: "No summary available for this dispute" });
-    }
-
-    res.json({
-      success: true,
-      data: dispute.ai_summary,
-      timestamp: new Date()
-    });
-
-  } catch (err) {
-    console.error("Get summary error:", err);
-    res.status(500).json({ message: "Failed to retrieve summary", error: err.message });
   }
 };

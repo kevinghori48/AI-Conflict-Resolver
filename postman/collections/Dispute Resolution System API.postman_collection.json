@@ -650,6 +650,186 @@
         }
       ],
       "id": "6a56d051-fa3d-4fa0-bcb3-6b88c61c7249"
+    },
+    {
+      "name": "Screen 8",
+      "item": [
+        {
+          "name": "Get Suggested plan",
+          "id": "7f38730a-5097-44e4-9bb0-c1ac0ee0125f",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": ""
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Plan Approval",
+          "id": "66f48a85-7396-41c5-9728-0d0502295263",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token_a}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\r\n  \"dispute_id\": \"{{disputeId}}\"\r\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/official-dispute/plan/accept",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "official-dispute",
+                "plan",
+                "accept"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Plan Rejection",
+          "id": "6d060c2c-eff2-4211-ad30-f7711678d424",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token_b}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\r\n  \"dispute_id\": \"{{disputeId}}\"\r\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/official-dispute/plan/reject",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "official-dispute",
+                "plan",
+                "reject"
+              ]
+            }
+          },
+          "response": []
+        }
+      ],
+      "id": "05bf97c9-478d-4ed9-a37b-de951f150420"
+    },
+    {
+      "name": "Screen 9",
+      "item": [
+        {
+          "name": "Negotiation comment",
+          "id": "6bae242d-1285-4d11-a621-a089b6c17c5a",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token_b}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\r\n  \"dispute_id\": \"{{disputeId}}\"\r\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/official-dispute/plan/reject",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "official-dispute",
+                "plan",
+                "reject"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Plan Approval",
+          "id": "fe4ee2e6-c79f-455a-a9c6-925884f761e1",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token_a}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\r\n  \"dispute_id\": \"{{disputeId}}\"\r\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/official-dispute/plan/accept",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "official-dispute",
+                "plan",
+                "accept"
+              ]
+            }
+          },
+          "response": []
+        }
+      ],
+      "id": "9f67770a-b03a-4c98-8f34-a0b1640f476c"
     }
   ],
   "auth": {
@@ -664,42 +844,42 @@
   },
   "variable": [
     {
-      "id": "d08e52cc-19aa-4de0-b3a4-5a03171859a9",
+      "id": "5530b49b-36b0-45d4-82d3-2ade1609095b",
       "key": "baseUrl",
       "value": "http://localhost:5001",
       "type": "string"
     },
     {
-      "id": "3141b793-e682-43a6-9e33-bff9dfec9a7e",
+      "id": "f500fa96-a4b0-461a-b52b-0b9e7eb49be2",
       "key": "authToken",
       "value": "",
       "type": "string"
     },
     {
-      "id": "72304447-f11a-4256-b2f8-f518842180fe",
+      "id": "77995475-34b5-446d-9c7f-86f944d7ff81",
       "key": "userId",
       "value": "",
       "type": "string"
     },
     {
-      "id": "78503073-9a34-48fc-a69f-05143200bbea",
+      "id": "8e5be1b7-0dca-4576-a85e-410af7afdb57",
       "key": "disputeId",
       "value": "",
       "type": "string"
     },
     {
-      "id": "1daa995c-cfbf-437d-bcbf-1344b8703490",
+      "id": "c2535a2b-0fea-4a6a-ad12-dba578a9dbf6",
       "key": "inviteCode",
       "value": "",
       "type": "string"
     },
     {
-      "id": "aa69ded7-fe2d-42be-859a-27abec4b4ed3",
+      "id": "295cfe28-0dc4-4add-975d-6f512d973f3f",
       "key": "token_a",
       "value": ""
     },
     {
-      "id": "b21bdf0c-7429-4b97-b0b6-d40c6058f3f1",
+      "id": "870b6480-5d64-4c3f-b204-ab61e1fa9a12",
       "key": "token_b",
       "value": ""
     }

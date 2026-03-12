@@ -42,6 +42,9 @@ router.get("/negotiation/comments/:dispute_id", auth, controller.getNegotiationC
 router.post("/negotiation/agree", auth, controller.signalAgreement);
 
 // SCREEN 9: Final Plan Review
+// Get the AI-generated final plan
+router.get("/final-plan/:dispute_id", auth, controller.getFinalPlan);
+
 // Approve the AI-generated final plan
 router.post("/final-plan/approve", auth, controller.approveFinalPlan);
 
