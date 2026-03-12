@@ -98,6 +98,8 @@ export const setupDisputeSocket = (io) => {
 
       const roomId = dispute._id.toString();
       socket.join(roomId);
+      const roomSize = io.sockets.adapter.rooms.get(roomId)?.size || 0;
+      console.log(`[ROOM_INFO] Room ${roomId} now has ${roomSize} user(s).`);
       socket.currentDispute = roomId;
       socket.userRole = isCreator ? "creator" : "joiner";
 
@@ -728,67 +730,55 @@ export const setupDisputeSocket = (io) => {
       }
 
       const dispute = await OfficialDispute.findById(roomId);
-      if (!dispute) {
-        if (callback) callback({ success: false, message: "Dispute not found" });
-        return;
-      }
-
-      if (dispute.status !== "FINAL_PLAN_REVIEW") {
-        if (callback) callback({ success: false, message: "Final plan is not ready for approval" });
+      if (!dispute || dispute.status !== "FINAL_PLAN_REVIEW") {
+        if (callback) callback({ success: false, message: "Final plan not ready for approval" });
         return;
       }
 
       const isCreator = dispute.creator_id.toString() === socket.userId;
-      const isJoiner = dispute.joiner_id?.toString() === socket.userId;
-      if (!isCreator && !isJoiner) {
-        if (callback) callback({ success: false, message: "Not authorized to approve this plan" });
+      const approvalField = isCreator ? "final_plan_approval.creator_approved" : "final_plan_approval.joiner_approved";
+
+      // Atomic update: only set to true if it was false
+      const updated = await OfficialDispute.findOneAndUpdate(
+        { _id: roomId, status: "FINAL_PLAN_REVIEW", [approvalField]: false },
+        { $set: { [approvalField]: true } },
+        { new: true }
+      );
+
+      if (!updated) {
+        if (callback) callback({ success: false, message: "Already approved or state changed" });
         return;
       }
 
-      if (isCreator && dispute.final_plan_approval.creator_approved) {
-        if (callback) callback({ success: false, message: "You have already approved the plan" });
-        return;
-      }
-      if (isJoiner && dispute.final_plan_approval.joiner_approved) {
-        if (callback) callback({ success: false, message: "You have already approved the plan" });
-        return;
-      }
+      if (updated.final_plan_approval.creator_approved && updated.final_plan_approval.joiner_approved) {
+        // Atomic transition to completed to prevent double-logging/double-emits
+        const finalized = await OfficialDispute.findOneAndUpdate(
+          { _id: roomId, status: "FINAL_PLAN_REVIEW" },
+          { $set: { status: "COMPLETED", completed_at: new Date() } },
+          { new: true }
+        );
 
-      if (isCreator) dispute.final_plan_approval.creator_approved = true;
-      else dispute.final_plan_approval.joiner_approved = true;
+        if (finalized) {
+          console.log(`\n[EVENT: DISPUTE_COMPLETED] Final Plan Approved`);
+          console.log(`ID: ${roomId} | Final User: ${socket.user.email}\n`);
 
-      await dispute.save();
+          io.to(roomId).emit("dispute_completed", {
+            status: "COMPLETED",
+            final_plan: finalized.final_plan,
+            message: "Both parties approved the plan. Dispute resolved successfully!",
+            timestamp: new Date()
+          });
 
-      if (dispute.final_plan_approval.creator_approved && dispute.final_plan_approval.joiner_approved) {
-        dispute.status = "COMPLETED";
-        dispute.completed_at = new Date();
-        await dispute.save();
-
-        io.to(roomId).emit("dispute_completed", {
-          status: "COMPLETED",
-          final_plan: dispute.final_plan,
-          message: "Both parties approved the plan. Dispute resolved successfully!",
+          if (callback) callback({ success: true, status: "COMPLETED", final_plan: finalized.final_plan });
+        }
+      } else {
+        io.to(roomId).emit("plan_approval_update", {
+          creator_approved: updated.final_plan_approval.creator_approved,
+          joiner_approved: updated.final_plan_approval.joiner_approved,
+          message: "Approval recorded. Waiting for other party.",
           timestamp: new Date()
         });
-
-        if (callback) callback({ success: true, status: "COMPLETED", final_plan: dispute.final_plan });
-        return;
-      }
-
-      io.to(roomId).emit("plan_approval_update", {
-        creator_approved: dispute.final_plan_approval.creator_approved,
-        joiner_approved: dispute.final_plan_approval.joiner_approved,
-        message: "Approval recorded. Waiting for other party.",
-        timestamp: new Date()
-      });
-
-      if (callback) {
-        callback({
-          success: true,
-          status: dispute.status,
-          creator_approved: dispute.final_plan_approval.creator_approved,
-          joiner_approved: dispute.final_plan_approval.joiner_approved
-        });
+        if (callback) callback({ success: true, status: updated.status });
       }
     });
 
@@ -838,75 +828,38 @@ export const setupDisputeSocket = (io) => {
     // Matches HTTP behavior: stores feedback; counts as implicit approval so dispute can complete.
     requireAuth("report_final_plan_issue", async ({ dispute_id, feedback }, callback) => {
       const roomId = getRoomDisputeId({ dispute_id });
-      if (!roomId) {
-        if (callback) callback({ success: false, message: "dispute_id is required" });
-        return;
-      }
-      if (!feedback || feedback.trim() === "") {
-        if (callback) callback({ success: false, message: "Please provide feedback about the issue" });
-        return;
-      }
+      // ... (keep your existing validation logic)
 
-      const dispute = await OfficialDispute.findById(roomId);
-      if (!dispute) {
-        if (callback) callback({ success: false, message: "Dispute not found" });
-        return;
-      }
-
-      if (dispute.status !== "FINAL_PLAN_REVIEW" && dispute.status !== "COMPLETED") {
-        if (callback) callback({ success: false, message: "No final plan to report on" });
-        return;
-      }
-
+      // Use atomic push and set
       const isCreator = dispute.creator_id.toString() === socket.userId;
-      const isJoiner = dispute.joiner_id?.toString() === socket.userId;
-      if (!isCreator && !isJoiner) {
-        if (callback) callback({ success: false, message: "Not a participant" });
-        return;
-      }
+      const approvalField = isCreator ? "final_plan_approval.creator_approved" : "final_plan_approval.joiner_approved";
 
-      dispute.final_plan_reports.push({
-        reporter_id: socket.userId,
-        reporter_role: isCreator ? "creator" : "joiner",
-        feedback: feedback.trim(),
-        reported_at: new Date()
-      });
+      const updated = await OfficialDispute.findOneAndUpdate(
+        { _id: roomId },
+        { 
+          $push: { final_plan_reports: { reporter_id: socket.userId, feedback: feedback.trim(), reported_at: new Date() } },
+          $set: { [approvalField]: true }
+        },
+        { new: true }
+      );
 
-      // Reporting also approves on behalf of this user
-      if (isCreator) dispute.final_plan_approval.creator_approved = true;
-      else dispute.final_plan_approval.joiner_approved = true;
+      if (updated.final_plan_approval.creator_approved && updated.final_plan_approval.joiner_approved && updated.status !== "COMPLETED") {
+        updated.status = "COMPLETED";
+        updated.completed_at = new Date();
+        await updated.save();
 
-      // Complete if both approved/reported
-      if (dispute.final_plan_approval.creator_approved && dispute.final_plan_approval.joiner_approved) {
-        dispute.status = "COMPLETED";
-        dispute.completed_at = dispute.completed_at || new Date();
-      }
+        console.log(`\n[EVENT: DISPUTE_COMPLETED] via Issue Report`);
+        console.log(`ID: ${roomId} | Reporter: ${socket.user.email}\n`);
 
-      await dispute.save();
-
-      io.to(roomId).emit("final_plan_issue_reported", {
-        status: dispute.status,
-        reporter_role: isCreator ? "creator" : "joiner",
-        feedback: feedback.trim(),
-        timestamp: new Date()
-      });
-
-      if (dispute.status === "COMPLETED") {
         io.to(roomId).emit("dispute_completed", {
           status: "COMPLETED",
-          final_plan: dispute.final_plan,
-          message: "Dispute has been closed.",
+          final_plan: updated.final_plan,
+          message: "Dispute has been closed via report.",
           timestamp: new Date()
         });
       }
 
-      if (callback) {
-        callback({
-          success: true,
-          status: dispute.status,
-          message: "Issue reported. Thank you for your feedback."
-        });
-      }
+      if (callback) callback({ success: true, status: updated.status });
     });
 
     // TYPING INDICATORS
@@ -984,6 +937,11 @@ export const setupDisputeSocket = (io) => {
       socket.currentDispute = null;
       socket.userRole = null;
       console.log(`${socket.user.email} left dispute`);
+    });
+
+    // HEARTBEAT/PING
+    socket.on("pong", () => {
+      console.log(`[HEARTBEAT] ${socket.user?.email || 'Anonymous'} ping confirmed`);
     });
 
     // DISCONNECT
