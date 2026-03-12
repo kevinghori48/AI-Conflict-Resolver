@@ -526,6 +526,18 @@
             "description": "Select solutions (Switch to User 2's token!)"
           },
           "response": []
+        },
+        {
+          "name": "Get Solution",
+          "id": "4437541f-c84f-4bc3-abd4-10f6785e69b6",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": ""
+            }
+          },
+          "response": []
         }
       ],
       "id": "ea95bb9c-dabb-4842-af50-f75de631ccb0"
@@ -652,42 +664,42 @@
   },
   "variable": [
     {
-      "id": "18945983-b3a0-45e5-b255-8af13cd30b32",
+      "id": "d08e52cc-19aa-4de0-b3a4-5a03171859a9",
       "key": "baseUrl",
       "value": "http://localhost:5001",
       "type": "string"
     },
     {
-      "id": "d9b62ad7-f8db-4f8a-a707-c4adaae8574a",
+      "id": "3141b793-e682-43a6-9e33-bff9dfec9a7e",
       "key": "authToken",
       "value": "",
       "type": "string"
     },
     {
-      "id": "8c82b8a2-c1c3-4fdf-9a21-1246016eb4fe",
+      "id": "72304447-f11a-4256-b2f8-f518842180fe",
       "key": "userId",
       "value": "",
       "type": "string"
     },
     {
-      "id": "59c60c1f-d048-4247-82d1-cbb2de2e0e53",
+      "id": "78503073-9a34-48fc-a69f-05143200bbea",
       "key": "disputeId",
       "value": "",
       "type": "string"
     },
     {
-      "id": "905ce38c-1d7c-42e6-b72b-b79a00293b95",
+      "id": "1daa995c-cfbf-437d-bcbf-1344b8703490",
       "key": "inviteCode",
       "value": "",
       "type": "string"
     },
     {
-      "id": "acbb4064-9e06-4d9a-9d7f-c0bd6d6bace8",
+      "id": "aa69ded7-fe2d-42be-859a-27abec4b4ed3",
       "key": "token_a",
       "value": ""
     },
     {
-      "id": "34cdb2e4-3f82-44f8-9fb0-361168f43ffa",
+      "id": "b21bdf0c-7429-4b97-b0b6-d40c6058f3f1",
       "key": "token_b",
       "value": ""
     }
