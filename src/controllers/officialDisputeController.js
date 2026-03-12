@@ -823,7 +823,7 @@ export const getAISummary = async (req, res) => {
 
 // AI HELPER: GENERATE SOLUTIONS
 
-async function generateSolutions(dispute, dispute_id, io) {
+export async function generateSolutions(dispute, dispute_id, io) {
   try {
     const prompt = `You are a conflict resolution expert generating solution options.
 
@@ -1025,7 +1025,7 @@ export const selectSolutions = async (req, res) => {
 
 // AI HELPER: GENERATE SUGGESTED PLAN
 
-async function generateSuggestedPlan(dispute, io) {
+export async function generateSuggestedPlan(dispute, io) {
   try {
     const creatorSelectedSolutions = dispute.solutions.filter(s =>
       dispute.solution_selections.creator_selected.includes(s.id)
