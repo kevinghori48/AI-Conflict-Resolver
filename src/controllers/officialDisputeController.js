@@ -1094,9 +1094,9 @@ OUTPUT JSON:
         message: "AI has suggested a resolution plan. Review and accept or start negotiation.",
         timestamp: new Date()
       });
+    console.log("Suggested plan generated for dispute:", dispute._id);
     }
 
-    console.log("Suggested plan generated for dispute:", dispute._id);
   } catch (error) {
     console.error("generateSuggestedPlan failed:", error);
     dispute.status = "OPTIONS_SELECTION";
