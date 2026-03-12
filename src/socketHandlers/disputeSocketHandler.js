@@ -128,39 +128,31 @@ export const setupDisputeSocket = (io) => {
       console.log(`Conversation ended for dispute ${dispute_id} by ${socket.user.email}`);
       console.log(`Socket ID: ${socket.id}`);
       console.log(`Timestamp: ${new Date().toISOString()}`);
-
       const dispute = await OfficialDispute.findById(dispute_id);
-
       if (!dispute) {
         console.log(`[Error] Dispute not found: ${dispute_id}`);
         if (callback) callback({ success: false, message: "Dispute not found" });
         return;
       }
-
       if (dispute.status !== "CONVERSATION") {
         console.log(`[Error] Wrong status: ${dispute.status} (expected CONVERSATION)`);
         if (callback) callback({ success: false, message: "Conversation already ended or not started" });
         return;
       }
-
       const isParticipant =
         dispute.creator_id.toString() === socket.userId ||
         dispute.joiner_id?.toString() === socket.userId;
-
       if (!isParticipant) {
         console.log(`[Error] Not a participant: ${socket.userId}`);
         if (callback) callback({ success: false, message: "Not a participant" });
         return;
       }
-
       dispute.conversation.ended_by = socket.userId;
       dispute.conversation.ended_at = new Date();
       dispute.status = "AI_SUMMARIZING";
       await dispute.save();
-
       console.log(`[Success] Status updated to AI_SUMMARIZING`);
       console.log(`[Success] Emitting conversation_ended to room: ${dispute_id}`);
-
       io.to(dispute_id).emit("conversation_ended", {
         ended_by: socket.userId,
         ended_by_role: socket.userRole,
@@ -168,12 +160,9 @@ export const setupDisputeSocket = (io) => {
         message: "Conversation ended. AI is generating summary...",
         timestamp: new Date()
       });
-
       if (callback) callback({ success: true, status: "AI_SUMMARIZING" });
-
       const disputeIdString = dispute._id.toString();
       console.log(`[Wait] Starting summary generation in 1s for dispute: ${disputeIdString}`);
-
       setTimeout(async () => {
         try {
           console.log(`[AI] Calling generateAISummary for dispute: ${disputeIdString}`);
@@ -182,7 +171,8 @@ export const setupDisputeSocket = (io) => {
             console.error(`[Error] Fresh dispute not found: ${disputeIdString}`);
             return;
           }
-          await generateAISummary(freshDispute, io);
+
+          await generateAISummary(freshDispute, disputeIdString, io); 
           console.log(`[Success] Summary generation completed for dispute: ${disputeIdString}`);
         } catch (error) {
           console.error(`[Error] Summary generation failed for dispute ${disputeIdString}:`, error);

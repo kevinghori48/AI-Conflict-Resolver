@@ -18,18 +18,21 @@ async function callGemini(prompt) {
 }
 
 const cleanAIResponse = (text) => {
+  // Try raw text first — avoids unnecessary sanitization for well-formed AI responses
+  try { return JSON.parse(text); } catch (_) { /* fall through to cleaned variants */ }
+
+  // Strip markdown fences and trim — no control-char removal yet
   let cleaned = text
     .replace(/```json/gi, "")
     .replace(/```/g, "")
-    .replace(/[\u0000-\u001F\u007F]/g, " ")
     .trim();
 
-  // Try raw text first, then cleaned, then extract first {...} block
-  for (const candidate of [text, cleaned]) {
-    try { return JSON.parse(candidate); } catch (_) { /* try next */ }
-  }
+  try { return JSON.parse(cleaned); } catch (_) { /* fall through */ }
 
-  const match = cleaned.match(/\{[\s\S]*\}/);
+  // Only sanitize control characters as a last resort, since it can alter string content
+  const sanitized = cleaned.replace(/[\u0000-\u001F\u007F]/g, " ");
+
+  const match = sanitized.match(/\{[\s\S]*\}/);
   if (match) {
     try { return JSON.parse(match[0]); } catch (_) { /* fall through */ }
   }
@@ -668,6 +671,7 @@ export const approveSummary = async (req, res) => {
   try {
     const { dispute_id } = req.body;
 
+    // Pre-check: load for authorization only (not for state decisions)
     const dispute = await OfficialDispute.findById(dispute_id);
     if (!dispute) return res.status(404).json({ message: "Dispute not found" });
 
@@ -682,21 +686,43 @@ export const approveSummary = async (req, res) => {
       return res.status(403).json({ message: "You are not authorized to approve this summary" });
     }
 
-    if (isCreator && dispute.summary_approval.creator_approved) {
-      return res.status(400).json({ message: "You have already approved the summary" });
+    // Atomic update: only flip the approval flag if it is still false AND status is SUMMARY_REVIEW.
+    // This eliminates the read-modify-write race where two simultaneous requests both read
+    // approval=false, both pass the in-memory guard above, and both trigger generateSolutions.
+    const approvalField = isCreator
+      ? "summary_approval.creator_approved"
+      : "summary_approval.joiner_approved";
+
+    const updated = await OfficialDispute.findOneAndUpdate(
+      { _id: dispute_id, status: "SUMMARY_REVIEW", [approvalField]: false },
+      { $set: { [approvalField]: true } },
+      { new: true }
+    );
+
+    if (!updated) {
+      // Either already approved by this user, or status changed concurrently
+      return res.status(400).json({
+        message: "You have already approved the summary, or it is no longer under review"
+      });
     }
-    if (isJoiner && dispute.summary_approval.joiner_approved) {
-      return res.status(400).json({ message: "You have already approved the summary" });
-    }
 
-    if (isCreator) dispute.summary_approval.creator_approved = true;
-    else dispute.summary_approval.joiner_approved = true;
+    if (updated.summary_approval.creator_approved && updated.summary_approval.joiner_approved) {
+      // Atomically claim the right to trigger generation by flipping status exactly once.
+      // If two requests somehow both reach this point, only one will succeed the CAS.
+      const claimed = await OfficialDispute.findOneAndUpdate(
+        { _id: dispute_id, status: "SUMMARY_REVIEW" },
+        { $set: { status: "AI_SUMMARIZING" } },
+        { new: true }
+      );
 
-    await dispute.save();
-
-    if (dispute.summary_approval.creator_approved && dispute.summary_approval.joiner_approved) {
-      dispute.status = "AI_SUMMARIZING";
-      await dispute.save();
+      if (!claimed) {
+        // Another concurrent request already flipped status — generation already queued
+        return res.json({
+          success: true,
+          message: "Both parties approved. Generating solution options...",
+          status: "AI_SUMMARIZING"
+        });
+      }
 
       if (req.io) {
         req.io.to(dispute_id).emit("generating_solutions", {
@@ -750,8 +776,8 @@ export const approveSummary = async (req, res) => {
 
     if (req.io) {
       req.io.to(dispute_id).emit("approval_update", {
-        creator_approved: dispute.summary_approval.creator_approved,
-        joiner_approved: dispute.summary_approval.joiner_approved,
+        creator_approved: updated.summary_approval.creator_approved,
+        joiner_approved: updated.summary_approval.joiner_approved,
         message: "Approval recorded. Waiting for other party.",
         timestamp: new Date()
       });
@@ -760,8 +786,8 @@ export const approveSummary = async (req, res) => {
     res.json({
       success: true,
       message: "Your approval recorded. Waiting for other party.",
-      creator_approved: dispute.summary_approval.creator_approved,
-      joiner_approved: dispute.summary_approval.joiner_approved
+      creator_approved: updated.summary_approval.creator_approved,
+      joiner_approved: updated.summary_approval.joiner_approved
     });
   } catch (err) {
     console.error("Approve summary error:", err);
@@ -1288,9 +1314,12 @@ export const postNegotiationComment = async (req, res) => {
     const savedComment = dispute.negotiation.comments[dispute.negotiation.comments.length - 1];
 
     if (req.io) {
+      const commentPlain = typeof savedComment.toObject === "function"
+        ? savedComment.toObject()
+        : { ...savedComment };
       req.io.to(dispute_id).emit("new_negotiation_comment", {
         comment: {
-          ...savedComment.toObject(),
+          ...commentPlain,
           sender_name: `${req.user.firstName} ${req.user.lastName}`
         },
         creator_ready: false,
