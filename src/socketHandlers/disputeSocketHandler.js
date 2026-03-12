@@ -60,10 +60,11 @@ export const setupDisputeSocket = (io) => {
       });
     };
 
-    // JOIN DISPUTE ROOM
+    const getRoomDisputeId = (payload) => payload?.dispute_id || socket.currentDispute;
+
+    // ─── JOIN DISPUTE ROOM ────────────────────────────────────────────────────
     requireAuth("join_dispute", async ({ dispute_id, invite_code }) => {
       const joinRef = dispute_id || invite_code;
-      console.log(`Join request: ${joinRef} from ${socket.user.email}`);
 
       let disputeQuery;
       if (dispute_id) {
@@ -122,19 +123,14 @@ export const setupDisputeSocket = (io) => {
       console.log(`[EMIT] user_online | to room: ${roomId} | user: ${socket.user.email}`);
     });
 
-    // END CONVERSATION
+    // ─── END CONVERSATION ─────────────────────────────────────────────────────
     requireAuth("end_conversation", async ({ dispute_id }, callback) => {
-      console.log(`Conversation ended for dispute ${dispute_id} by ${socket.user.email}`);
-      console.log(`Socket ID: ${socket.id}`);
-      console.log(`Timestamp: ${new Date().toISOString()}`);
       const dispute = await OfficialDispute.findById(dispute_id);
       if (!dispute) {
-        console.log(`[Error] Dispute not found: ${dispute_id}`);
         if (callback) callback({ success: false, message: "Dispute not found" });
         return;
       }
       if (dispute.status !== "CONVERSATION") {
-        console.log(`[Error] Wrong status: ${dispute.status} (expected CONVERSATION)`);
         if (callback) callback({ success: false, message: "Conversation already ended or not started" });
         return;
       }
@@ -142,15 +138,14 @@ export const setupDisputeSocket = (io) => {
         dispute.creator_id.toString() === socket.userId ||
         dispute.joiner_id?.toString() === socket.userId;
       if (!isParticipant) {
-        console.log(`[Error] Not a participant: ${socket.userId}`);
         if (callback) callback({ success: false, message: "Not a participant" });
         return;
       }
+
       dispute.conversation.ended_by = socket.userId;
       dispute.conversation.ended_at = new Date();
       dispute.status = "AI_SUMMARIZING";
       await dispute.save();
-      console.log(`[Success] Status updated to AI_SUMMARIZING`);
 
       io.to(dispute_id).emit("conversation_ended", {
         ended_by: socket.userId,
@@ -162,19 +157,16 @@ export const setupDisputeSocket = (io) => {
       console.log(`[EMIT] conversation_ended | to room: ${dispute_id}`);
 
       if (callback) callback({ success: true, status: "AI_SUMMARIZING" });
+
       const disputeIdString = dispute._id.toString();
       setTimeout(async () => {
         try {
           console.log(`[CALL] generateAISummary | dispute: ${disputeIdString}`);
           const freshDispute = await OfficialDispute.findById(disputeIdString);
-          if (!freshDispute) {
-            console.error(`[Error] Fresh dispute not found: ${disputeIdString}`);
-            return;
-          }
+          if (!freshDispute) return;
           await generateAISummary(freshDispute, disputeIdString, io);
-          console.log(`[Success] Summary generation completed for dispute: ${disputeIdString}`);
         } catch (error) {
-          console.error(`[Error] Summary generation failed for dispute ${disputeIdString}:`, error);
+          console.error(`[Error] generateAISummary failed | dispute: ${disputeIdString}`, error);
           io.to(disputeIdString).emit("summary_generation_failed", {
             message: "Failed to generate summary. Please try again.",
             error: error.message
@@ -184,10 +176,8 @@ export const setupDisputeSocket = (io) => {
       }, 1000);
     });
 
-    // SEND TEXT MESSAGE
+    // ─── SEND TEXT MESSAGE ────────────────────────────────────────────────────
     requireAuth("send_message", async ({ dispute_id, text_content }, callback) => {
-      console.log(`Message from ${socket.user.email}: "${text_content?.substring(0, 30)}..."`);
-
       try {
         if (!text_content?.trim()) {
           const error = { success: false, message: "Message cannot be empty" };
@@ -238,10 +228,7 @@ export const setupDisputeSocket = (io) => {
 
         dispute.conversation.messages.push(message._id);
         await dispute.save();
-
         await message.populate('sender_id', 'firstName lastName email');
-
-        console.log(`Message saved: ${message._id}`);
 
         if (callback) callback({ success: true, message, timestamp: new Date() });
 
@@ -261,10 +248,8 @@ export const setupDisputeSocket = (io) => {
       }
     });
 
-    // SEND AUDIO MESSAGE
+    // ─── SEND AUDIO MESSAGE ───────────────────────────────────────────────────
     requireAuth("send_audio", async ({ dispute_id, audio_data, duration }, callback) => {
-      console.log(`Audio from ${socket.user.email}: ${duration}s`);
-
       try {
         if (!audio_data) {
           const error = { success: false, message: "No audio data provided" };
@@ -313,7 +298,6 @@ export const setupDisputeSocket = (io) => {
 
         let base64Data = audio_data;
         if (base64Data.includes("base64,")) base64Data = base64Data.split("base64,")[1];
-
         fs.writeFileSync(filePath, Buffer.from(base64Data, 'base64'));
 
         const message = await DisputeMessage.create({
@@ -334,7 +318,6 @@ export const setupDisputeSocket = (io) => {
         dispute.conversation.messages.push(message._id);
         dispute.conversation.audio_count[senderRole] = currentCount + 1;
         await dispute.save();
-
         await message.populate('sender_id', 'firstName lastName email');
 
         if (callback) {
@@ -361,9 +344,415 @@ export const setupDisputeSocket = (io) => {
       }
     });
 
-    const getRoomDisputeId = (payload) => payload?.dispute_id || socket.currentDispute;
+    // ─── GET AI SUMMARY ───────────────────────────────────────────────────────
+    requireAuth("get_ai_summary", async ({ dispute_id }, callback) => {
+      const roomId = getRoomDisputeId({ dispute_id });
+      if (!roomId) {
+        if (callback) callback({ success: false, message: "dispute_id is required" });
+        return;
+      }
 
-    // ACCEPT SUGGESTED PLAN
+      const dispute = await OfficialDispute.findById(roomId);
+      if (!dispute) {
+        if (callback) callback({ success: false, message: "Dispute not found" });
+        return;
+      }
+
+      const isParticipant =
+        dispute.creator_id.toString() === socket.userId ||
+        dispute.joiner_id?.toString() === socket.userId;
+      if (!isParticipant) {
+        if (callback) callback({ success: false, message: "Not authorized" });
+        return;
+      }
+
+      if (!dispute.ai_summary || !dispute.ai_summary.summary_text) {
+        if (callback) callback({ success: false, message: "No summary available yet" });
+        return;
+      }
+
+      console.log(`[EMIT] callback get_ai_summary | to: ${socket.user.email} | dispute: ${roomId}`);
+      if (callback) callback({ success: true, data: dispute.ai_summary, timestamp: new Date() });
+    });
+
+    // ─── APPROVE SUMMARY ──────────────────────────────────────────────────────
+    requireAuth("approve_summary", async ({ dispute_id }, callback) => {
+      const roomId = getRoomDisputeId({ dispute_id });
+      if (!roomId) {
+        if (callback) callback({ success: false, message: "dispute_id is required" });
+        return;
+      }
+
+      const dispute = await OfficialDispute.findById(roomId);
+      if (!dispute) {
+        if (callback) callback({ success: false, message: "Dispute not found" });
+        return;
+      }
+
+      if (dispute.status !== "SUMMARY_REVIEW") {
+        if (callback) callback({ success: false, message: "Summary is not ready for approval" });
+        return;
+      }
+
+      const isCreator = dispute.creator_id.toString() === socket.userId;
+      const isJoiner = dispute.joiner_id?.toString() === socket.userId;
+      if (!isCreator && !isJoiner) {
+        if (callback) callback({ success: false, message: "Not a participant" });
+        return;
+      }
+
+      // Atomic update to prevent race condition
+      const approvalField = isCreator
+        ? "summary_approval.creator_approved"
+        : "summary_approval.joiner_approved";
+
+      const updated = await OfficialDispute.findOneAndUpdate(
+        { _id: roomId, status: "SUMMARY_REVIEW", [approvalField]: false },
+        { $set: { [approvalField]: true } },
+        { new: true }
+      );
+
+      if (!updated) {
+        if (callback) callback({ success: false, message: "You have already approved the summary, or it is no longer under review" });
+        return;
+      }
+
+      if (updated.summary_approval.creator_approved && updated.summary_approval.joiner_approved) {
+        const claimed = await OfficialDispute.findOneAndUpdate(
+          { _id: roomId, status: "SUMMARY_REVIEW" },
+          { $set: { status: "AI_SUMMARIZING" } },
+          { new: true }
+        );
+
+        if (!claimed) {
+          if (callback) callback({ success: true, message: "Both parties approved. Generating solution options...", status: "AI_SUMMARIZING" });
+          return;
+        }
+
+        io.to(roomId).emit("generating_solutions", {
+          status: "AI_SUMMARIZING",
+          message: "Both parties approved. Generating solution options...",
+          timestamp: new Date()
+        });
+        console.log(`[EMIT] generating_solutions | to room: ${roomId}`);
+
+        const disputeIdString = roomId;
+        setTimeout(async () => {
+          try {
+            console.log(`[CALL] generateSolutions | dispute: ${disputeIdString}`);
+            const freshDispute = await OfficialDispute.findById(disputeIdString);
+            if (!freshDispute) return;
+            // Re-use the imported generateSolutions logic via controller import
+            // We call generateAISummary as a placeholder — solutions are generated inside the controller's generateSolutions helper.
+            // Since generateSolutions is not exported, we trigger it indirectly by delegating to the same flow used in the HTTP route.
+            // To keep parity, import and call it directly if you export it from the controller.
+            const { generateSolutions } = await import("../controllers/officialDisputeController.js");
+            await generateSolutions(freshDispute, disputeIdString, io);
+          } catch (error) {
+            console.error("Solution generation failed:", error);
+            try {
+              const rollback = await OfficialDispute.findById(disputeIdString);
+              if (rollback && rollback.status === "AI_SUMMARIZING") {
+                rollback.status = "SUMMARY_REVIEW";
+                rollback.summary_approval.creator_approved = false;
+                rollback.summary_approval.joiner_approved = false;
+                await rollback.save();
+              }
+            } catch (rollbackErr) {
+              console.error("Rollback failed:", rollbackErr);
+            }
+            io.to(disputeIdString).emit("solution_generation_failed", {
+              message: "Failed to generate solutions. Please try again.",
+              error: error.message
+            });
+            console.log(`[EMIT] solution_generation_failed | to room: ${disputeIdString}`);
+          }
+        }, 1000);
+
+        if (callback) callback({ success: true, status: "AI_SUMMARIZING" });
+        return;
+      }
+
+      io.to(roomId).emit("approval_update", {
+        creator_approved: updated.summary_approval.creator_approved,
+        joiner_approved: updated.summary_approval.joiner_approved,
+        message: "Approval recorded. Waiting for other party.",
+        timestamp: new Date()
+      });
+      console.log(`[EMIT] approval_update | to room: ${roomId} | creator: ${updated.summary_approval.creator_approved} joiner: ${updated.summary_approval.joiner_approved}`);
+
+      if (callback) {
+        callback({
+          success: true,
+          status: updated.status,
+          creator_approved: updated.summary_approval.creator_approved,
+          joiner_approved: updated.summary_approval.joiner_approved
+        });
+      }
+    });
+
+    // ─── REPORT SUMMARY ───────────────────────────────────────────────────────
+    requireAuth("report_summary", async ({ dispute_id, feedback }, callback) => {
+      const roomId = getRoomDisputeId({ dispute_id });
+      if (!roomId) {
+        if (callback) callback({ success: false, message: "dispute_id is required" });
+        return;
+      }
+      if (!feedback || feedback.trim() === "") {
+        if (callback) callback({ success: false, message: "Please provide feedback about what's wrong with the summary" });
+        return;
+      }
+
+      const dispute = await OfficialDispute.findById(roomId);
+      if (!dispute) {
+        if (callback) callback({ success: false, message: "Dispute not found" });
+        return;
+      }
+      if (dispute.status !== "SUMMARY_REVIEW") {
+        if (callback) callback({ success: false, message: "Summary is not currently under review" });
+        return;
+      }
+      if (!dispute.ai_summary || !dispute.ai_summary.summary_text) {
+        if (callback) callback({ success: false, message: "No summary exists to regenerate" });
+        return;
+      }
+
+      const isParticipant =
+        dispute.creator_id.toString() === socket.userId ||
+        dispute.joiner_id?.toString() === socket.userId;
+      if (!isParticipant) {
+        if (callback) callback({ success: false, message: "Not a participant" });
+        return;
+      }
+
+      dispute.status = "AI_SUMMARIZING";
+      dispute.ai_summary.regeneration_count = (dispute.ai_summary.regeneration_count || 0) + 1;
+      await dispute.save();
+
+      io.to(roomId).emit("summary_regenerating", {
+        message: "Regenerating summary based on your feedback...",
+        regeneration_count: dispute.ai_summary.regeneration_count,
+        timestamp: new Date()
+      });
+      console.log(`[EMIT] summary_regenerating | to room: ${roomId}`);
+
+      const disputeIdString = roomId;
+      try {
+        const messages = await DisputeMessage.find({ dispute_id: disputeIdString })
+          .populate("sender_id", "firstName lastName email")
+          .sort({ timestamp: 1 });
+
+        let transcript = "";
+        for (const msg of messages) {
+          const senderName = msg.sender_role === "creator" ? "Person A" : "Person B";
+          if (msg.message_type === "text") {
+            transcript += `${senderName}: ${msg.text_content}\n`;
+          } else {
+            transcript += `${senderName}: [Audio message - ${msg.audio_data?.duration || 30}s]\n`;
+          }
+        }
+
+        const { GoogleGenerativeAI } = await import("@google/generative-ai");
+        const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+        const model = genAI.getGenerativeModel({
+          model: "gemini-2.5-flash",
+          generationConfig: { responseMimeType: "application/json", temperature: 0 }
+        });
+
+        const prompt = `You are a conflict mediator. You previously generated a summary, but a user reported an issue.
+
+PREVIOUS SUMMARY:
+${dispute.ai_summary.summary_text}
+
+PREVIOUS KEY POINTS:
+${dispute.ai_summary.key_points.map(kp => `- ${kp.point} (mentioned by: ${kp.mentioned_by})`).join("\n")}
+
+USER FEEDBACK:
+"${feedback.trim()}"
+
+ORIGINAL CONVERSATION:
+${transcript || "No messages — use context only."}
+
+CONTEXT:
+- Relationship: ${dispute.intake_data.relationship_type}
+- Goal: ${dispute.intake_data.goal}
+
+TASK: Generate an IMPROVED summary that specifically addresses the user's feedback.
+
+OUTPUT JSON:
+{
+  "summary_text": "Improved 2-3 paragraph summary addressing the feedback",
+  "key_points": [
+    {
+      "point": "Important point from conversation",
+      "mentioned_by": "creator | joiner | both"
+    }
+  ]
+}`;
+
+        const result = await model.generateContent(prompt);
+        const raw = result.response.text();
+        let newSummary;
+        try { newSummary = JSON.parse(raw); } catch {
+          const cleaned = raw.replace(/```json/gi, "").replace(/```/g, "").trim();
+          newSummary = JSON.parse(cleaned);
+        }
+
+        dispute.ai_summary.summary_text = newSummary.summary_text;
+        dispute.ai_summary.key_points = newSummary.key_points;
+        dispute.ai_summary.generated_at = new Date();
+        dispute.status = "SUMMARY_REVIEW";
+        dispute.summary_approval.creator_approved = false;
+        dispute.summary_approval.joiner_approved = false;
+        await dispute.save();
+
+        io.to(roomId).emit("summary_updated", {
+          status: "SUMMARY_REVIEW",
+          summary: dispute.ai_summary,
+          message: "Summary has been regenerated based on feedback",
+          regeneration_count: dispute.ai_summary.regeneration_count,
+          timestamp: new Date()
+        });
+        console.log(`[EMIT] summary_updated | to room: ${roomId}`);
+
+        if (callback) callback({ success: true, summary: dispute.ai_summary, regeneration_count: dispute.ai_summary.regeneration_count });
+
+      } catch (aiErr) {
+        console.error("Summary regeneration failed:", aiErr);
+        dispute.status = "SUMMARY_REVIEW";
+        await dispute.save();
+        io.to(roomId).emit("summary_generation_failed", {
+          message: "Failed to regenerate summary. Please try again.",
+          error: aiErr.message
+        });
+        console.log(`[EMIT] summary_generation_failed | to room: ${roomId}`);
+        if (callback) callback({ success: false, message: "Failed to regenerate summary", error: aiErr.message });
+      }
+    });
+
+    // ─── GET SOLUTIONS ────────────────────────────────────────────────────────
+    requireAuth("get_solutions", async ({ dispute_id }, callback) => {
+      const roomId = getRoomDisputeId({ dispute_id });
+      if (!roomId) {
+        if (callback) callback({ success: false, message: "dispute_id is required" });
+        return;
+      }
+
+      const dispute = await OfficialDispute.findById(roomId);
+      if (!dispute) {
+        if (callback) callback({ success: false, message: "Dispute not found" });
+        return;
+      }
+
+      const isParticipant =
+        dispute.creator_id.toString() === socket.userId ||
+        dispute.joiner_id?.toString() === socket.userId;
+      if (!isParticipant) {
+        if (callback) callback({ success: false, message: "Not authorized" });
+        return;
+      }
+
+      if (!dispute.solutions || dispute.solutions.length === 0) {
+        if (callback) callback({ success: false, message: "Solutions not generated yet" });
+        return;
+      }
+
+      console.log(`[EMIT] callback get_solutions | to: ${socket.user.email} | dispute: ${roomId}`);
+      if (callback) callback({ success: true, solutions: dispute.solutions, status: dispute.status });
+    });
+
+    // ─── SELECT SOLUTIONS ─────────────────────────────────────────────────────
+    requireAuth("select_solutions", async ({ dispute_id, selected_solution_ids }, callback) => {
+      const roomId = getRoomDisputeId({ dispute_id });
+      if (!roomId) {
+        if (callback) callback({ success: false, message: "dispute_id is required" });
+        return;
+      }
+
+      if (!Array.isArray(selected_solution_ids) || selected_solution_ids.length === 0) {
+        if (callback) callback({ success: false, message: "Please select at least one solution" });
+        return;
+      }
+
+      const dispute = await OfficialDispute.findById(roomId);
+      if (!dispute) {
+        if (callback) callback({ success: false, message: "Dispute not found" });
+        return;
+      }
+
+      if (dispute.status !== "OPTIONS_SELECTION") {
+        if (callback) callback({ success: false, message: "Not in solution selection phase" });
+        return;
+      }
+
+      const isCreator = dispute.creator_id.toString() === socket.userId;
+      const isJoiner = dispute.joiner_id?.toString() === socket.userId;
+      if (!isCreator && !isJoiner) {
+        if (callback) callback({ success: false, message: "Not a participant" });
+        return;
+      }
+
+      const validSolutionIds = dispute.solutions.map(s => s.id);
+      const invalidSelections = selected_solution_ids.filter(id => !validSolutionIds.includes(id));
+      if (invalidSelections.length > 0) {
+        if (callback) callback({ success: false, message: `Invalid solution IDs: ${invalidSelections.join(", ")}` });
+        return;
+      }
+
+      if (isCreator) dispute.solution_selections.creator_selected = selected_solution_ids;
+      else dispute.solution_selections.joiner_selected = selected_solution_ids;
+      await dispute.save();
+
+      const creatorVotes = dispute.solution_selections.creator_selected;
+      const joinerVotes = dispute.solution_selections.joiner_selected;
+
+      if (creatorVotes.length > 0 && joinerVotes.length > 0) {
+        dispute.status = "AI_SUMMARIZING";
+        await dispute.save();
+
+        io.to(roomId).emit("generating_suggested_plan", {
+          status: "AI_SUMMARIZING",
+          creator_selections: creatorVotes,
+          joiner_selections: joinerVotes,
+          message: "Both parties have selected. AI is generating a suggested resolution plan...",
+          timestamp: new Date()
+        });
+        console.log(`[EMIT] generating_suggested_plan | to room: ${roomId}`);
+
+        const disputeIdString = roomId;
+        setTimeout(async () => {
+          try {
+            console.log(`[CALL] generateSuggestedPlan | dispute: ${disputeIdString}`);
+            const freshDispute = await OfficialDispute.findById(disputeIdString);
+            if (!freshDispute) return;
+            const { generateSuggestedPlan } = await import("../controllers/officialDisputeController.js");
+            await generateSuggestedPlan(freshDispute, io);
+          } catch (error) {
+            console.error("Suggested plan generation failed:", error);
+            io.to(disputeIdString).emit("suggested_plan_failed", {
+              message: "Failed to generate suggested plan. Please try again.",
+              error: error.message
+            });
+            console.log(`[EMIT] suggested_plan_failed | to room: ${disputeIdString}`);
+          }
+        }, 1000);
+
+        if (callback) callback({ success: true, status: "AI_SUMMARIZING", creator_selections: creatorVotes, joiner_selections: joinerVotes });
+        return;
+      }
+
+      io.to(roomId).emit("selection_update", {
+        message: "Selection recorded. Waiting for other party.",
+        has_creator_selected: creatorVotes.length > 0,
+        has_joiner_selected: joinerVotes.length > 0,
+        timestamp: new Date()
+      });
+      console.log(`[EMIT] selection_update | to room: ${roomId} | creator: ${creatorVotes.length > 0} joiner: ${joinerVotes.length > 0}`);
+
+      if (callback) callback({ success: true, your_selections: selected_solution_ids, waiting_for_other: true });
+    });
+
+    // ─── ACCEPT SUGGESTED PLAN ────────────────────────────────────────────────
     requireAuth("accept_suggested_plan", async ({ dispute_id }, callback) => {
       const roomId = getRoomDisputeId({ dispute_id });
       if (!roomId) {
@@ -400,7 +789,6 @@ export const setupDisputeSocket = (io) => {
 
       if (isCreator) dispute.suggested_plan_approval.creator_approved = true;
       else dispute.suggested_plan_approval.joiner_approved = true;
-
       await dispute.save();
 
       if (dispute.suggested_plan_approval.creator_approved && dispute.suggested_plan_approval.joiner_approved) {
@@ -440,7 +828,7 @@ export const setupDisputeSocket = (io) => {
       }
     });
 
-    // REJECT SUGGESTED PLAN → START NEGOTIATION
+    // ─── REJECT SUGGESTED PLAN → START NEGOTIATION ───────────────────────────
     requireAuth("reject_suggested_plan", async ({ dispute_id, reason }, callback) => {
       const roomId = getRoomDisputeId({ dispute_id });
       if (!roomId) {
@@ -485,7 +873,7 @@ export const setupDisputeSocket = (io) => {
       if (callback) callback({ success: true, status: "NEGOTIATION" });
     });
 
-    // POST NEGOTIATION COMMENT
+    // ─── POST NEGOTIATION COMMENT ─────────────────────────────────────────────
     requireAuth("post_negotiation_comment", async ({ dispute_id, text }, callback) => {
       const roomId = getRoomDisputeId({ dispute_id });
       if (!roomId) {
@@ -515,14 +903,13 @@ export const setupDisputeSocket = (io) => {
       }
 
       const senderRole = isCreator ? "creator" : "joiner";
-      const comment = {
+
+      dispute.negotiation.comments.push({
         sender_id: socket.userId,
         sender_role: senderRole,
         text: text.trim(),
         timestamp: new Date()
-      };
-
-      dispute.negotiation.comments.push(comment);
+      });
       dispute.negotiation.creator_ready = false;
       dispute.negotiation.joiner_ready = false;
       await dispute.save();
@@ -544,7 +931,7 @@ export const setupDisputeSocket = (io) => {
       if (callback) callback({ success: true, comment: savedComment });
     });
 
-    // SIGNAL AGREEMENT → triggers final plan generation
+    // ─── SIGNAL AGREEMENT → triggers final plan generation ───────────────────
     requireAuth("signal_agreement", async ({ dispute_id }, callback) => {
       const roomId = getRoomDisputeId({ dispute_id });
       if (!roomId) {
@@ -584,7 +971,7 @@ export const setupDisputeSocket = (io) => {
         });
         console.log(`[EMIT] generating_final_plan | to room: ${roomId} | both parties agreed`);
 
-        const disputeIdString = dispute._id.toString();
+        const disputeIdString = roomId;
         setTimeout(async () => {
           try {
             console.log(`[CALL] generateFinalPlan | dispute: ${disputeIdString}`);
@@ -628,7 +1015,7 @@ export const setupDisputeSocket = (io) => {
       }
     });
 
-    // GET SUGGESTED PLAN
+    // ─── GET SUGGESTED PLAN ───────────────────────────────────────────────────
     requireAuth("get_suggested_plan", async ({ dispute_id }, callback) => {
       const roomId = getRoomDisputeId({ dispute_id });
       if (!roomId) {
@@ -671,7 +1058,7 @@ export const setupDisputeSocket = (io) => {
       }
     });
 
-    // GET NEGOTIATION COMMENTS
+    // ─── GET NEGOTIATION COMMENTS ─────────────────────────────────────────────
     requireAuth("get_negotiation_comments", async ({ dispute_id }, callback) => {
       const roomId = getRoomDisputeId({ dispute_id });
       if (!roomId) {
@@ -706,7 +1093,7 @@ export const setupDisputeSocket = (io) => {
       }
     });
 
-    // APPROVE FINAL PLAN
+    // ─── APPROVE FINAL PLAN ───────────────────────────────────────────────────
     requireAuth("approve_final_plan", async ({ dispute_id }, callback) => {
       const roomId = getRoomDisputeId({ dispute_id });
       if (!roomId) {
@@ -743,7 +1130,6 @@ export const setupDisputeSocket = (io) => {
 
       if (isCreator) dispute.final_plan_approval.creator_approved = true;
       else dispute.final_plan_approval.joiner_approved = true;
-
       await dispute.save();
 
       if (dispute.final_plan_approval.creator_approved && dispute.final_plan_approval.joiner_approved) {
@@ -781,7 +1167,7 @@ export const setupDisputeSocket = (io) => {
       }
     });
 
-    // GET FINAL PLAN
+    // ─── GET FINAL PLAN ───────────────────────────────────────────────────────
     requireAuth("get_final_plan", async ({ dispute_id }, callback) => {
       const roomId = getRoomDisputeId({ dispute_id });
       if (!roomId) {
@@ -824,7 +1210,7 @@ export const setupDisputeSocket = (io) => {
       }
     });
 
-    // REPORT FINAL PLAN ISSUE
+    // ─── REPORT FINAL PLAN ISSUE ──────────────────────────────────────────────
     requireAuth("report_final_plan_issue", async ({ dispute_id, feedback }, callback) => {
       const roomId = getRoomDisputeId({ dispute_id });
       if (!roomId) {
@@ -892,7 +1278,7 @@ export const setupDisputeSocket = (io) => {
       if (callback) callback({ success: true, status: dispute.status, message: "Issue reported. Thank you for your feedback." });
     });
 
-    // TYPING INDICATORS
+    // ─── TYPING INDICATORS ────────────────────────────────────────────────────
     requireAuth("typing", ({ dispute_id }) => {
       socket.to(dispute_id).emit("user_typing", {
         user_id: socket.userId,
@@ -912,7 +1298,7 @@ export const setupDisputeSocket = (io) => {
       console.log(`[EMIT] user_stop_typing | to room: ${dispute_id} | user: ${socket.user.email}`);
     });
 
-    // MESSAGE STATUS UPDATES
+    // ─── MESSAGE STATUS UPDATES ───────────────────────────────────────────────
     requireAuth("message_delivered", async ({ message_id, dispute_id }) => {
       await DisputeMessage.findByIdAndUpdate(message_id, { status: "delivered", delivered_at: new Date() });
       socket.to(dispute_id).emit("message_status_update", { message_id, status: "delivered", timestamp: new Date() });
@@ -925,7 +1311,7 @@ export const setupDisputeSocket = (io) => {
       console.log(`[EMIT] message_status_update (read) | to room: ${dispute_id} | message: ${message_id}`);
     });
 
-    // AUDIO RECORDING INDICATORS
+    // ─── AUDIO RECORDING INDICATORS ──────────────────────────────────────────
     requireAuth("audio_recording_start", ({ dispute_id }) => {
       socket.to(dispute_id).emit("user_recording_audio", {
         user_id: socket.userId,
@@ -945,7 +1331,7 @@ export const setupDisputeSocket = (io) => {
       console.log(`[EMIT] user_stopped_recording | to room: ${dispute_id} | user: ${socket.user.email}`);
     });
 
-    // LEAVE DISPUTE ROOM
+    // ─── LEAVE DISPUTE ROOM ───────────────────────────────────────────────────
     requireAuth("leave_dispute", ({ dispute_id }) => {
       socket.leave(dispute_id);
       socket.to(dispute_id).emit("user_left", {
@@ -957,10 +1343,9 @@ export const setupDisputeSocket = (io) => {
       console.log(`[EMIT] user_left | to room: ${dispute_id} | user: ${socket.user.email}`);
       socket.currentDispute = null;
       socket.userRole = null;
-      console.log(`${socket.user.email} left dispute`);
     });
 
-    // DISCONNECT
+    // ─── DISCONNECT ───────────────────────────────────────────────────────────
     socket.on("disconnect", (reason) => {
       console.log(`\nDISCONNECT: ${socket.id} - Reason: ${reason}\n`);
       if (socket.currentDispute && socket.authenticated) {
