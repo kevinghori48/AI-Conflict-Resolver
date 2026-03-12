@@ -18,26 +18,39 @@ async function callGemini(prompt) {
 }
 
 const cleanAIResponse = (text) => {
-  // Try raw text first — avoids unnecessary sanitization for well-formed AI responses
-  try { return JSON.parse(text); } catch (_) { /* fall through to cleaned variants */ }
+  // 1. Try raw text first
+  try { return JSON.parse(text); } catch (_) {}
 
-  // Strip markdown fences and trim — no control-char removal yet
+  // 2. Strip markdown fences
   let cleaned = text
     .replace(/```json/gi, "")
     .replace(/```/g, "")
     .trim();
 
-  try { return JSON.parse(cleaned); } catch (_) { /* fall through */ }
+  try { return JSON.parse(cleaned); } catch (_) {}
 
-  // Only sanitize control characters as a last resort, since it can alter string content
-  const sanitized = cleaned.replace(/[\u0000-\u001F\u007F]/g, " ");
-
-  const match = sanitized.match(/\{[\s\S]*\}/);
-  if (match) {
-    try { return JSON.parse(match[0]); } catch (_) { /* fall through */ }
+  // 3. Try extracting JSON object
+  const objectMatch = cleaned.match(/\{[\s\S]*\}/);
+  if (objectMatch) {
+    try { return JSON.parse(objectMatch[0]); } catch (_) {}
   }
 
-  console.error("JSON Parse Failed:", text);
+  // 4. Try extracting JSON array
+  const arrayMatch = cleaned.match(/\[[\s\S]*\]/);
+  if (arrayMatch) {
+    try { return JSON.parse(arrayMatch[0]); } catch (_) {}
+  }
+
+  // 5. Last resort — strip control characters
+  const sanitized = cleaned.replace(/[\u0000-\u001F\u007F]/g, " ");
+
+  const sanitizedObject = sanitized.match(/\{[\s\S]*\}/);
+  if (sanitizedObject) {
+    try { return JSON.parse(sanitizedObject[0]); } catch (_) {}
+  }
+
+  // Log the raw response so you can see exactly what Gemini returned
+  console.error("[cleanAIResponse] All parse attempts failed. Raw response:", text);
   throw new Error("AI returned invalid JSON format");
 };
 
