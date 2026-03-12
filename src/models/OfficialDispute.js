@@ -42,8 +42,9 @@ const officialDisputeSchema = new mongoose.Schema({
   // CONVERSATION     → active audio/text chat
   // AI_SUMMARIZING   → AI generating summary OR final plan
   // SUMMARY_REVIEW   → both reviewing AI summary
-  // OPTIONS_SELECTION→ both selecting preferred solutions
-  // NEGOTIATION      → comment thread to align on final plan
+  // OPTIONS_SELECTION      → both selecting preferred solutions
+  // SUGGESTED_PLAN_REVIEW  → both reviewing AI-suggested plan (accept or negotiate)
+  // NEGOTIATION            → comment thread to align on final plan
   // FINAL_PLAN_REVIEW→ both reviewing the AI-generated final plan
   // COMPLETED        → dispute fully resolved
   status: {
