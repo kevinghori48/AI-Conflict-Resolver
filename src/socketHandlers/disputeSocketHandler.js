@@ -836,7 +836,7 @@ export const setupDisputeSocket = (io) => {
 
       const updated = await OfficialDispute.findOneAndUpdate(
         { _id: roomId },
-        { 
+        {
           $push: { final_plan_reports: { reporter_id: socket.userId, feedback: feedback.trim(), reported_at: new Date() } },
           $set: { [approvalField]: true }
         },
