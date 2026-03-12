@@ -4,7 +4,7 @@ import DisputeMessage from "../models/DisputeMessage.js";
 import crypto from "crypto";
 import fs from "fs";
 
-async function callGemini(prompt) {
+export async function callGemini(prompt) {
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
   const model = genAI.getGenerativeModel({
     model: "gemini-2.5-flash",
@@ -17,7 +17,7 @@ async function callGemini(prompt) {
   return result.response.text();
 }
 
-const cleanAIResponse = (text) => {
+export const cleanAIResponse = (text) => {
   // 1. Try raw text first
   try { return JSON.parse(text); } catch (_) {}
 
@@ -965,13 +965,22 @@ export const selectSolutions = async (req, res) => {
       return res.status(400).json({ message: `Invalid solution IDs: ${invalidSelections.join(", ")}` });
     }
 
-    if (isCreator) dispute.solution_selections.creator_selected = selected_solution_ids;
-    else dispute.solution_selections.joiner_selected = selected_solution_ids;
+    const selectionField = isCreator
+      ? "solution_selections.creator_selected"
+      : "solution_selections.joiner_selected";
 
-    await dispute.save();
+    const updated = await OfficialDispute.findByIdAndUpdate(
+      dispute_id,
+      { $set: { [selectionField]: selected_solution_ids } },
+      { new: true }
+    );
 
-    const creatorVotes = dispute.solution_selections.creator_selected;
-    const joinerVotes = dispute.solution_selections.joiner_selected;
+    if (!updated) {
+      return res.status(404).json({ message: "Dispute not found" });
+    }
+
+    const creatorVotes = updated.solution_selections.creator_selected;
+    const joinerVotes = updated.solution_selections.joiner_selected;
 
     if (creatorVotes.length > 0 && joinerVotes.length > 0) {
       dispute.status = "AI_SUMMARIZING";

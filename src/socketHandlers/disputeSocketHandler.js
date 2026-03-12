@@ -547,12 +547,7 @@ export const setupDisputeSocket = (io) => {
           }
         }
 
-        const { GoogleGenerativeAI } = await import("@google/generative-ai");
-        const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-        const model = genAI.getGenerativeModel({
-          model: "gemini-2.5-flash",
-          generationConfig: { responseMimeType: "application/json", temperature: 0 }
-        });
+        const { callGemini, cleanAIResponse } = await import("../controllers/officialDisputeController.js");
 
         const prompt = `You are a conflict mediator. You previously generated a summary, but a user reported an issue.
 
@@ -585,13 +580,8 @@ OUTPUT JSON:
   ]
 }`;
 
-        const result = await model.generateContent(prompt);
-        const raw = result.response.text();
-        let newSummary;
-        try { newSummary = JSON.parse(raw); } catch {
-          const cleaned = raw.replace(/```json/gi, "").replace(/```/g, "").trim();
-          newSummary = JSON.parse(cleaned);
-        }
+        const raw = await callGemini(prompt);
+        const newSummary = cleanAIResponse(raw);
 
         dispute.ai_summary.summary_text = newSummary.summary_text;
         dispute.ai_summary.key_points = newSummary.key_points;
@@ -954,10 +944,12 @@ OUTPUT JSON:
 
       const savedComment = dispute.negotiation.comments[dispute.negotiation.comments.length - 1];
 
+      const commentPlain = typeof savedComment.toObject === "function"
+        ? savedComment.toObject()
+        : { ...savedComment };
       io.to(roomId).emit("new_negotiation_comment", {
         comment: {
-          ...savedComment.toObject?.(),
-          ...(!savedComment.toObject ? savedComment : {}),
+          ...commentPlain,
           sender_name: `${socket.user.firstName} ${socket.user.lastName}`
         },
         creator_ready: false,
