@@ -376,14 +376,10 @@ export const setupDisputeSocket = (io) => {
         return;
       }
 
+      // 1. Identify user role
       const dispute = await OfficialDispute.findById(roomId);
       if (!dispute) {
         if (callback) callback({ success: false, message: "Dispute not found" });
-        return;
-      }
-
-      if (dispute.status !== "SUGGESTED_PLAN_REVIEW") {
-        if (callback) callback({ success: false, message: "No suggested plan available for acceptance" });
         return;
       }
 
@@ -394,54 +390,74 @@ export const setupDisputeSocket = (io) => {
         return;
       }
 
-      if (isCreator && dispute.suggested_plan_approval?.creator_approved) {
-        if (callback) callback({ success: false, message: "You have already accepted the plan" });
+      const approvalField = isCreator
+        ? "suggested_plan_approval.creator_approved"
+        : "suggested_plan_approval.joiner_approved";
+
+      // 2. ATOMIC UPDATE: Record this user's approval
+      const updated = await OfficialDispute.findOneAndUpdate(
+        {
+          _id: roomId,
+          status: "SUGGESTED_PLAN_REVIEW",
+          [approvalField]: false
+        },
+        { $set: { [approvalField]: true } },
+        { new: true }
+      );
+
+      if (!updated) {
+        if (callback) callback({ success: false, message: "Already approved or incorrect status" });
         return;
       }
-      if (isJoiner && dispute.suggested_plan_approval?.joiner_approved) {
-        if (callback) callback({ success: false, message: "You have already accepted the plan" });
-        return;
-      }
 
-      if (isCreator) dispute.suggested_plan_approval.creator_approved = true;
-      else dispute.suggested_plan_approval.joiner_approved = true;
+      // 3. Check if both have now approved
+      if (updated.suggested_plan_approval.creator_approved && updated.suggested_plan_approval.joiner_approved) {
+        // 4. ATOMIC TRANSITION TO COMPLETED
+        const finalized = await OfficialDispute.findOneAndUpdate(
+          { _id: roomId, status: "SUGGESTED_PLAN_REVIEW" },
+          {
+            $set: {
+              status: "COMPLETED",
+              completed_at: new Date(),
+              final_plan: updated.suggested_plan,
+              final_plan_approval: { creator_approved: true, joiner_approved: true }
+            }
+          },
+          { new: true }
+        );
 
-      await dispute.save();
+        if (finalized) {
+          // LOGGING ADDED HERE
+          console.log(`\n[DISPUTE_COMPLETED] via Suggested Plan Acceptance`);
+          console.log(`ID: ${roomId} | Completed At: ${finalized.completed_at.toISOString()}`);
+          console.log(`Final approval triggered by: ${socket.user.email}\n`);
 
-      if (dispute.suggested_plan_approval.creator_approved && dispute.suggested_plan_approval.joiner_approved) {
-        dispute.status = "COMPLETED";
-        dispute.completed_at = new Date();
-        dispute.final_plan = dispute.suggested_plan;
-        dispute.final_plan_approval = { creator_approved: true, joiner_approved: true };
-        await dispute.save();
+          io.to(roomId).emit("dispute_completed", {
+            status: "COMPLETED",
+            final_plan: finalized.final_plan,
+            message: "Both parties accepted the suggested plan. Dispute resolved successfully!",
+            timestamp: new Date()
+          });
 
-        io.to(roomId).emit("dispute_completed", {
-          status: "COMPLETED",
-          final_plan: dispute.final_plan,
-          message: "Both parties accepted the suggested plan. Dispute resolved successfully!",
+          if (callback) callback({ success: true, status: "COMPLETED", final_plan: finalized.final_plan });
+        }
+      } else {
+        // Only one party has approved so far
+        io.to(roomId).emit("suggested_plan_approval_update", {
+          creator_approved: updated.suggested_plan_approval.creator_approved,
+          joiner_approved: updated.suggested_plan_approval.joiner_approved,
+          message: "Acceptance recorded. Waiting for other party.",
           timestamp: new Date()
         });
 
         if (callback) {
-          callback({ success: true, status: "COMPLETED", final_plan: dispute.final_plan });
+          callback({
+            success: true,
+            status: updated.status,
+            creator_approved: updated.suggested_plan_approval.creator_approved,
+            joiner_approved: updated.suggested_plan_approval.joiner_approved
+          });
         }
-        return;
-      }
-
-      io.to(roomId).emit("suggested_plan_approval_update", {
-        creator_approved: dispute.suggested_plan_approval.creator_approved,
-        joiner_approved: dispute.suggested_plan_approval.joiner_approved,
-        message: "Acceptance recorded. Waiting for other party.",
-        timestamp: new Date()
-      });
-
-      if (callback) {
-        callback({
-          success: true,
-          status: dispute.status,
-          creator_approved: dispute.suggested_plan_approval.creator_approved,
-          joiner_approved: dispute.suggested_plan_approval.joiner_approved
-        });
       }
     });
 
