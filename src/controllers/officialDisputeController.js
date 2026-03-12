@@ -739,15 +739,23 @@ export const approveSummary = async (req, res) => {
     const dispute = await OfficialDispute.findById(dispute_id);
     if (!dispute) return res.status(404).json({ message: "Dispute not found" });
 
-    if (dispute.status !== "SUMMARY_REVIEW") {
-      return res.status(400).json({ message: "Summary is not ready for approval" });
-    }
-
     const isCreator = dispute.creator_id.toString() === req.user._id.toString();
     const isJoiner = dispute.joiner_id?.toString() === req.user._id.toString();
 
     if (!isCreator && !isJoiner) {
       return res.status(403).json({ message: "You are not authorized to approve this summary" });
+    }
+
+    // Prevent duplicate approvals from the same user
+    if (isCreator && dispute.summary_approval.creator_approved) {
+      return res.status(400).json({ message: "You have already approved the summary" });
+    }
+    if (isJoiner && dispute.summary_approval.joiner_approved) {
+      return res.status(400).json({ message: "You have already approved the summary" });
+    }
+
+    if (dispute.status !== "SUMMARY_REVIEW") {
+      return res.status(400).json({ message: "Summary is not ready for approval" });
     }
 
     if (isCreator) dispute.summary_approval.creator_approved = true;
