@@ -658,10 +658,36 @@
           "name": "Get Suggested plan",
           "id": "7f38730a-5097-44e4-9bb0-c1ac0ee0125f",
           "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token_a}}",
+                  "type": "string"
+                }
+              ]
+            },
             "method": "GET",
             "header": [],
             "url": {
-              "raw": ""
+              "raw": "{{baseUrl}}/official-dispute/plan/suggested/:disputeId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "official-dispute",
+                "plan",
+                "suggested",
+                ":disputeId"
+              ],
+              "variable": [
+                {
+                  "key": "disputeId",
+                  "value": "69b25205de82ba6633efc5c8",
+                  "uuid": "b32abf22-dea5-4cc7-9042-4c99b2eba2e2"
+                }
+              ]
             }
           },
           "response": []
