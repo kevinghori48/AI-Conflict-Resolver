@@ -663,94 +663,107 @@ OUTPUT JSON:
 
     // ─── SELECT SOLUTIONS ─────────────────────────────────────────────────────
     requireAuth("select_solutions", async ({ dispute_id, selected_solution_ids }, callback) => {
-      const roomId = getRoomDisputeId({ dispute_id });
-      if (!roomId) {
-        if (callback) callback({ success: false, message: "dispute_id is required" });
-        return;
-      }
+  const roomId = getRoomDisputeId({ dispute_id });
+  console.log(`[DEBUG] select_solutions | roomId: ${roomId} | userId: ${socket.userId} | selections: ${JSON.stringify(selected_solution_ids)}`);
 
-      if (!Array.isArray(selected_solution_ids) || selected_solution_ids.length === 0) {
-        if (callback) callback({ success: false, message: "Please select at least one solution" });
-        return;
-      }
+  if (!roomId) {
+    if (callback) callback({ success: false, message: "dispute_id is required" });
+    return;
+  }
 
-      const dispute = await OfficialDispute.findById(roomId);
-      if (!dispute) {
-        if (callback) callback({ success: false, message: "Dispute not found" });
-        return;
-      }
+  if (!Array.isArray(selected_solution_ids) || selected_solution_ids.length === 0) {
+    if (callback) callback({ success: false, message: "Please select at least one solution" });
+    return;
+  }
 
-      if (dispute.status !== "OPTIONS_SELECTION") {
-        if (callback) callback({ success: false, message: "Not in solution selection phase" });
-        return;
-      }
+  const dispute = await OfficialDispute.findById(roomId);
+  if (!dispute) {
+    if (callback) callback({ success: false, message: "Dispute not found" });
+    return;
+  }
 
-      const isCreator = dispute.creator_id.toString() === socket.userId;
-      const isJoiner = dispute.joiner_id?.toString() === socket.userId;
-      if (!isCreator && !isJoiner) {
-        if (callback) callback({ success: false, message: "Not a participant" });
-        return;
-      }
+  console.log(`[DEBUG] dispute status: ${dispute.status} | creatorVotes: ${JSON.stringify(dispute.solution_selections.creator_selected)} | joinerVotes: ${JSON.stringify(dispute.solution_selections.joiner_selected)}`);
 
-      const validSolutionIds = dispute.solutions.map(s => s.id);
-      const invalidSelections = selected_solution_ids.filter(id => !validSolutionIds.includes(id));
-      if (invalidSelections.length > 0) {
-        if (callback) callback({ success: false, message: `Invalid solution IDs: ${invalidSelections.join(", ")}` });
-        return;
-      }
+  if (dispute.status !== "OPTIONS_SELECTION") {
+    console.log(`[DEBUG] wrong status: ${dispute.status}`);
+    if (callback) callback({ success: false, message: "Not in solution selection phase" });
+    return;
+  }
 
-      if (isCreator) dispute.solution_selections.creator_selected = selected_solution_ids;
-      else dispute.solution_selections.joiner_selected = selected_solution_ids;
-      await dispute.save();
+  const isCreator = dispute.creator_id.toString() === socket.userId;
+  const isJoiner = dispute.joiner_id?.toString() === socket.userId;
+  console.log(`[DEBUG] isCreator: ${isCreator} | isJoiner: ${isJoiner}`);
 
-      const creatorVotes = dispute.solution_selections.creator_selected;
-      const joinerVotes = dispute.solution_selections.joiner_selected;
+  if (!isCreator && !isJoiner) {
+    if (callback) callback({ success: false, message: "Not a participant" });
+    return;
+  }
 
-      if (creatorVotes.length > 0 && joinerVotes.length > 0) {
-        dispute.status = "AI_SUMMARIZING";
-        await dispute.save();
+  const validSolutionIds = dispute.solutions.map(s => s.id);
+  const invalidSelections = selected_solution_ids.filter(id => !validSolutionIds.includes(id));
+  if (invalidSelections.length > 0) {
+    if (callback) callback({ success: false, message: `Invalid solution IDs: ${invalidSelections.join(", ")}` });
+    return;
+  }
 
-        io.to(roomId).emit("generating_suggested_plan", {
-          status: "AI_SUMMARIZING",
-          creator_selections: creatorVotes,
-          joiner_selections: joinerVotes,
-          message: "Both parties have selected. AI is generating a suggested resolution plan...",
-          timestamp: new Date()
-        });
-        console.log(`[EMIT] generating_suggested_plan | to room: ${roomId}`);
+  if (isCreator) dispute.solution_selections.creator_selected = selected_solution_ids;
+  else dispute.solution_selections.joiner_selected = selected_solution_ids;
+  await dispute.save();
 
-        const disputeIdString = roomId;
-        setTimeout(async () => {
-          try {
-            console.log(`[CALL] generateSuggestedPlan | dispute: ${disputeIdString}`);
-            const freshDispute = await OfficialDispute.findById(disputeIdString);
-            if (!freshDispute) return;
-            const { generateSuggestedPlan } = await import("../controllers/officialDisputeController.js");
-            await generateSuggestedPlan(freshDispute, io);
-          } catch (error) {
-            console.error("Suggested plan generation failed:", error);
-            io.to(disputeIdString).emit("suggested_plan_failed", {
-              message: "Failed to generate suggested plan. Please try again.",
-              error: error.message
-            });
-            console.log(`[EMIT] suggested_plan_failed | to room: ${disputeIdString}`);
-          }
-        }, 1000);
+  const creatorVotes = dispute.solution_selections.creator_selected;
+  const joinerVotes = dispute.solution_selections.joiner_selected;
+  console.log(`[DEBUG] after save | creatorVotes: ${JSON.stringify(creatorVotes)} | joinerVotes: ${JSON.stringify(joinerVotes)}`);
 
-        if (callback) callback({ success: true, status: "AI_SUMMARIZING", creator_selections: creatorVotes, joiner_selections: joinerVotes });
-        return;
-      }
+  if (creatorVotes.length > 0 && joinerVotes.length > 0) {
+    console.log(`[DEBUG] both voted — triggering suggested plan generation`);
+    dispute.status = "AI_SUMMARIZING";
+    await dispute.save();
 
-      io.to(roomId).emit("selection_update", {
-        message: "Selection recorded. Waiting for other party.",
-        has_creator_selected: creatorVotes.length > 0,
-        has_joiner_selected: joinerVotes.length > 0,
-        timestamp: new Date()
-      });
-      console.log(`[EMIT] selection_update | to room: ${roomId} | creator: ${creatorVotes.length > 0} joiner: ${joinerVotes.length > 0}`);
-
-      if (callback) callback({ success: true, your_selections: selected_solution_ids, waiting_for_other: true });
+    io.to(roomId).emit("generating_suggested_plan", {
+      status: "AI_SUMMARIZING",
+      creator_selections: creatorVotes,
+      joiner_selections: joinerVotes,
+      message: "Both parties have selected. AI is generating a suggested resolution plan...",
+      timestamp: new Date()
     });
+    console.log(`[EMIT] generating_suggested_plan | to room: ${roomId}`);
+
+    const disputeIdString = roomId;
+    setTimeout(async () => {
+      try {
+        console.log(`[CALL] generateSuggestedPlan | dispute: ${disputeIdString}`);
+        const freshDispute = await OfficialDispute.findById(disputeIdString);
+        if (!freshDispute) {
+          console.log(`[DEBUG] freshDispute not found: ${disputeIdString}`);
+          return;
+        }
+        await generateSuggestedPlan(freshDispute, io);
+        console.log(`[DEBUG] generateSuggestedPlan completed | dispute: ${disputeIdString}`);
+      } catch (error) {
+        console.error(`[ERROR] generateSuggestedPlan failed | dispute: ${disputeIdString}`, error);
+        io.to(disputeIdString).emit("suggested_plan_failed", {
+          message: "Failed to generate suggested plan. Please try again.",
+          error: error.message
+        });
+        console.log(`[EMIT] suggested_plan_failed | to room: ${disputeIdString}`);
+      }
+    }, 1000);
+
+    if (callback) callback({ success: true, status: "AI_SUMMARIZING", creator_selections: creatorVotes, joiner_selections: joinerVotes });
+    return;
+  }
+
+  console.log(`[DEBUG] only one party voted — waiting for other`);
+  io.to(roomId).emit("selection_update", {
+    message: "Selection recorded. Waiting for other party.",
+    has_creator_selected: creatorVotes.length > 0,
+    has_joiner_selected: joinerVotes.length > 0,
+    timestamp: new Date()
+  });
+  console.log(`[EMIT] selection_update | to room: ${roomId} | creator: ${creatorVotes.length > 0} joiner: ${joinerVotes.length > 0}`);
+
+  if (callback) callback({ success: true, your_selections: selected_solution_ids, waiting_for_other: true });
+});
 
     // ─── ACCEPT SUGGESTED PLAN ────────────────────────────────────────────────
     requireAuth("accept_suggested_plan", async ({ dispute_id }, callback) => {
