@@ -452,9 +452,7 @@ export const endConversation = async (req, res) => {
   }
 };
 
-// ─────────────────────────────────────────────
 // AI HELPER: GENERATE SUMMARY
-// ─────────────────────────────────────────────
 
 export async function generateAISummary(dispute, dispute_id, io) {
   try {
@@ -532,9 +530,7 @@ OUTPUT JSON:
   }
 }
 
-// ─────────────────────────────────────────────
 // SCREEN 6: AI SUMMARY REVIEW
-// ─────────────────────────────────────────────
 
 // FIX: Added missing SUMMARY_REVIEW status guard
 export const reportSummary = async (req, res) => {
@@ -825,9 +821,7 @@ export const getAISummary = async (req, res) => {
   }
 };
 
-// ─────────────────────────────────────────────
 // AI HELPER: GENERATE SOLUTIONS
-// ─────────────────────────────────────────────
 
 async function generateSolutions(dispute, dispute_id, io) {
   try {
