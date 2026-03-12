@@ -716,7 +716,7 @@ OUTPUT JSON:
 
   if (creatorVotes.length > 0 && joinerVotes.length > 0) {
     console.log(`[DEBUG] both voted — triggering suggested plan generation`);
-    dispute.status = "AI_SUMMARIZING";
+    await OfficialDispute.findByIdAndUpdate(roomId, { $set: { status: "AI_SUMMARIZING" } });
     await dispute.save();
 
     io.to(roomId).emit("generating_suggested_plan", {
