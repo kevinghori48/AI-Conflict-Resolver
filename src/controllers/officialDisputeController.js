@@ -965,24 +965,13 @@ export const selectSolutions = async (req, res) => {
       return res.status(400).json({ message: `Invalid solution IDs: ${invalidSelections.join(", ")}` });
     }
 
-    // REPLACE WITH
-const selectionField = isCreator
-  ? "solution_selections.creator_selected"
-  : "solution_selections.joiner_selected";
+    if (isCreator) dispute.solution_selections.creator_selected = selected_solution_ids;
+    else dispute.solution_selections.joiner_selected = selected_solution_ids;
 
-const updated = await OfficialDispute.findByIdAndUpdate(
-  roomId,
-  { $set: { [selectionField]: selected_solution_ids } },
-  { new: true }
-);
+    await dispute.save();
 
-if (!updated) {
-  if (callback) callback({ success: false, message: "Dispute not found" });
-  return;
-}
-
-const creatorVotes = updated.solution_selections.creator_selected;
-const joinerVotes = updated.solution_selections.joiner_selected;
+    const creatorVotes = dispute.solution_selections.creator_selected;
+    const joinerVotes = dispute.solution_selections.joiner_selected;
 
     if (creatorVotes.length > 0 && joinerVotes.length > 0) {
       dispute.status = "AI_SUMMARIZING";
