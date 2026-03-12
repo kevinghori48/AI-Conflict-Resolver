@@ -971,7 +971,9 @@ export const selectSolutions = async (req, res) => {
           joiner_selections: joinerVotes,
           message: "Both parties have selected. AI is generating a suggested resolution plan...",
           timestamp: new Date()
-        });
+        }
+      );
+      console.log(`[EMIT] generating_suggested_plan | to room: ${dispute_id}`);
       }
 
       const disputeIdString = dispute._id.toString();
