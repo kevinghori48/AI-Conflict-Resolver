@@ -38,7 +38,6 @@ const officialDisputeSchema = new mongoose.Schema({
     }]
   },
 
-  // ─── State Machine ───────────────────────────────────────────
   // PRE_DISPUTE      → waiting for joiner
   // CONVERSATION     → active audio/text chat
   // AI_SUMMARIZING   → AI generating summary OR final plan
@@ -55,6 +54,7 @@ const officialDisputeSchema = new mongoose.Schema({
       "AI_SUMMARIZING",
       "SUMMARY_REVIEW",
       "OPTIONS_SELECTION",
+      "SUGGESTED_PLAN_REVIEW",
       "NEGOTIATION",
       "FINAL_PLAN_REVIEW",
       "COMPLETED"
@@ -108,6 +108,28 @@ const officialDisputeSchema = new mongoose.Schema({
   solution_selections: {
     creator_selected: [String],
     joiner_selected: [String]
+  },
+
+  // AI-suggested plan after both select solutions; both can accept or start negotiation.
+  suggested_plan: {
+    title: String,
+    summary: String,
+    action_steps: [{
+      step: Number,
+      action: String,
+      responsible: String,
+      timeframe: String
+    }],
+    commitments: {
+      creator: [String],
+      joiner: [String]
+    },
+    success_criteria: String,
+    generated_at: Date
+  },
+  suggested_plan_approval: {
+    creator_approved: { type: Boolean, default: false },
+    joiner_approved: { type: Boolean, default: false }
   },
 
   // Comment thread between both parties after solution selection.

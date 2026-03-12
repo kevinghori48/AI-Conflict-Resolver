@@ -26,6 +26,11 @@ router.post("/summary/approve", auth, controller.approveSummary);
 router.get("/solutions/:dispute_id", auth, controller.getSolutions);  // new endpoint to fetch generated solutions
 router.post("/solutions/select", auth, controller.selectSolutions);
 
+// Suggested plan (after both select solutions): get, accept, or reject → negotiation
+router.get("/plan/suggested/:dispute_id", auth, controller.getSuggestedPlan);
+router.post("/plan/accept", auth, controller.acceptSuggestedPlan);
+router.post("/plan/reject", auth, controller.rejectSuggestedPlan);
+
 // SCREEN 8: Negotiation Phase
 // Post a comment in the negotiation thread
 router.post("/negotiation/comment", auth, controller.postNegotiationComment);

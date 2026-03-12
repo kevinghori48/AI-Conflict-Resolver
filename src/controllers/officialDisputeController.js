@@ -903,8 +903,101 @@ OUTPUT JSON:
   }
 };
 
+// HELPER: GENERATE SUGGESTED PLAN AFTER SOLUTION SELECTION
+async function generateSuggestedPlan(dispute, io) {
+  try {
+    console.log("Generating suggested plan for dispute:", dispute._id);
+
+    const creatorSelectedSolutions = dispute.solutions.filter(s =>
+      dispute.solution_selections.creator_selected.includes(s.id)
+    );
+    const joinerSelectedSolutions = dispute.solutions.filter(s =>
+      dispute.solution_selections.joiner_selected.includes(s.id)
+    );
+
+    const prompt = `You are a professional conflict resolution expert. Based on the solutions both parties selected, generate a suggested resolution plan.
+
+CONTEXT:
+- Relationship: ${dispute.intake_data.relationship_type}${dispute.intake_data.custom_relationship ? ` (${dispute.intake_data.custom_relationship})` : ''}
+- Relationship Importance: ${dispute.intake_data.relationship_importance}
+- Goal: ${dispute.intake_data.goal}
+- Non-negotiables: ${dispute.intake_data.non_negotiables || "None"}
+
+ORIGINAL DISPUTE SUMMARY:
+${dispute.ai_summary.summary_text}
+
+PERSON A (Creator) selected these solutions:
+${creatorSelectedSolutions.map(s => `- Option ${s.id}: ${s.title} — ${s.description}`).join('\n')}
+
+PERSON B (Joiner) selected these solutions:
+${joinerSelectedSolutions.map(s => `- Option ${s.id}: ${s.title} — ${s.description}`).join('\n')}
+
+TASK: Create a fair suggested resolution plan that balances both parties' selected solutions. This is a SUGGESTION — both parties will review it and can either accept it or negotiate further.
+
+OUTPUT JSON:
+{
+  "suggested_plan": {
+    "title": "Suggested Resolution Plan Title (5-8 words)",
+    "summary": "One paragraph summarizing the suggested resolution based on both parties selections",
+    "action_steps": [
+      {
+        "step": 1,
+        "action": "Clear specific action",
+        "responsible": "creator" | "joiner" | "both",
+        "timeframe": "Immediate / Within 1 week / Ongoing"
+      }
+    ],
+    "commitments": {
+      "creator": ["Specific commitment for Person A"],
+      "joiner": ["Specific commitment for Person B"]
+    },
+    "success_criteria": "How both parties will know the resolution is working"
+  }
+}`;
+
+    const response = await callGemini(prompt);
+    console.log("=== RAW GEMINI SUGGESTED PLAN RESPONSE ===");
+    console.log(response);
+    console.log("==========================================");
+
+    const result = cleanAIResponse(response);
+
+    if (!result.suggested_plan || !result.suggested_plan.title || !result.suggested_plan.action_steps) {
+      throw new Error("Invalid suggested plan structure from AI");
+    }
+
+    dispute.suggested_plan = {
+      ...result.suggested_plan,
+      generated_at: new Date()
+    };
+    dispute.suggested_plan_approval = {
+      creator_approved: false,
+      joiner_approved: false
+    };
+    dispute.status = "SUGGESTED_PLAN_REVIEW";
+    await dispute.save();
+
+    if (io) {
+      io.to(dispute._id.toString()).emit("suggested_plan_ready", {
+        status: "SUGGESTED_PLAN_REVIEW",
+        suggested_plan: dispute.suggested_plan,
+        message: "AI has suggested a resolution plan. Review and accept or start negotiation.",
+        timestamp: new Date()
+      });
+    }
+
+    console.log("Suggested plan generated for dispute:", dispute._id);
+
+  } catch (error) {
+    console.error("Suggested plan generation failed:", error);
+    dispute.status = "OPTIONS_SELECTION";
+    await dispute.save();
+    throw error;
+  }
+}
+
 // ENDPOINT: SELECT SOLUTIONS
-// After both select, move to NEGOTIATION phase instead of auto-completing
+// After both select, generate suggested plan → SUGGESTED_PLAN_REVIEW
 export const selectSolutions = async (req, res) => {
   try {
     const { dispute_id, selected_solution_ids } = req.body;
@@ -912,15 +1005,12 @@ export const selectSolutions = async (req, res) => {
     // 1. Validation (Your Code)
     if (!Array.isArray(selected_solution_ids) || selected_solution_ids.length === 0) {
       return res.status(400).json({ message: "Please select at least one solution" });
-      return res.status(400).json({ message: "Please select at least one solution" });
     }
 
     const dispute = await OfficialDispute.findById(dispute_id);
     if (!dispute) return res.status(404).json({ message: "Dispute not found" });
-    if (!dispute) return res.status(404).json({ message: "Dispute not found" });
 
     if (dispute.status !== "OPTIONS_SELECTION") {
-      return res.status(400).json({ message: "Not in solution selection phase" });
       return res.status(400).json({ message: "Not in solution selection phase" });
     }
 
@@ -929,13 +1019,11 @@ export const selectSolutions = async (req, res) => {
 
     if (!isCreator && !isJoiner) {
       return res.status(403).json({ message: "You are not authorized to select solutions" });
-      return res.status(403).json({ message: "You are not authorized to select solutions" });
     }
 
     const validSolutionIds = dispute.solutions.map(s => s.id);
     const invalidSelections = selected_solution_ids.filter(id => !validSolutionIds.includes(id));
     if (invalidSelections.length > 0) {
-      return res.status(400).json({ message: `Invalid solution IDs: ${invalidSelections.join(', ')}` });
       return res.status(400).json({ message: `Invalid solution IDs: ${invalidSelections.join(', ')}` });
     }
 
@@ -947,26 +1035,42 @@ export const selectSolutions = async (req, res) => {
     const creatorVotes = dispute.solution_selections.creator_selected;
     const joinerVotes = dispute.solution_selections.joiner_selected;
 
-    // Both have selected — move to NEGOTIATION phase
+    // Both have selected — generate suggested plan first
     if (creatorVotes.length > 0 && joinerVotes.length > 0) {
-      dispute.status = "NEGOTIATION";
+      dispute.status = "AI_SUMMARIZING";
       await dispute.save();
 
-      // Notify Socket
       if (req.io) {
-        req.io.to(dispute_id).emit("negotiation_started", {
-          status: "NEGOTIATION",
+        req.io.to(dispute_id).emit("generating_suggested_plan", {
+          status: "AI_SUMMARIZING",
           creator_selections: creatorVotes,
           joiner_selections: joinerVotes,
-          message: "Both parties have selected solutions. Discuss and agree on a final plan.",
+          message: "Both parties have selected. AI is generating a suggested resolution plan...",
           timestamp: new Date()
         });
       }
 
+      const disputeIdString = dispute._id.toString();
+      setTimeout(async () => {
+        try {
+          const freshDispute = await OfficialDispute.findById(disputeIdString);
+          if (!freshDispute) return;
+          await generateSuggestedPlan(freshDispute, req.io);
+        } catch (error) {
+          console.error("Suggested plan generation failed:", error);
+          if (req.io) {
+            req.io.to(disputeIdString).emit("suggested_plan_failed", {
+              message: "Failed to generate suggested plan. Please try again.",
+              error: error.message
+            });
+          }
+        }
+      }, 1000);
+
       return res.json({
         success: true,
-        message: "Both parties have selected. Negotiation phase started.",
-        status: "NEGOTIATION",
+        message: "Both parties have selected. Generating suggested plan...",
+        status: "AI_SUMMARIZING",
         creator_selections: creatorVotes,
         joiner_selections: joinerVotes
       });
@@ -992,6 +1096,188 @@ export const selectSolutions = async (req, res) => {
   } catch (err) {
     console.error("Select solutions error:", err);
     res.status(500).json({ message: "Failed to select solutions", error: err.message });
+  }
+};
+
+// ENDPOINT: GET SUGGESTED PLAN
+export const getSuggestedPlan = async (req, res) => {
+  try {
+    const { dispute_id } = req.params;
+
+    const dispute = await OfficialDispute.findById(dispute_id);
+    if (!dispute) return res.status(404).json({ message: "Dispute not found" });
+
+    const isParticipant =
+      dispute.creator_id.toString() === req.user._id.toString() ||
+      dispute.joiner_id?.toString() === req.user._id.toString();
+
+    if (!isParticipant) return res.status(403).json({ message: "Not authorized" });
+
+    if (!dispute.suggested_plan || !dispute.suggested_plan.title) {
+      return res.status(404).json({ message: "Suggested plan not generated yet" });
+    }
+
+    const isCreator = dispute.creator_id.toString() === req.user._id.toString();
+
+    res.json({
+      success: true,
+      suggested_plan: dispute.suggested_plan,
+      status: dispute.status,
+      approval: {
+        creator_approved: dispute.suggested_plan_approval?.creator_approved || false,
+        joiner_approved: dispute.suggested_plan_approval?.joiner_approved || false,
+        your_approval: isCreator
+          ? dispute.suggested_plan_approval?.creator_approved
+          : dispute.suggested_plan_approval?.joiner_approved
+      }
+    });
+
+  } catch (err) {
+    console.error("Get suggested plan error:", err);
+    res.status(500).json({ message: "Failed to fetch suggested plan", error: err.message });
+  }
+};
+
+// ENDPOINT: ACCEPT SUGGESTED PLAN
+// Both accept → COMPLETED (skip negotiation entirely)
+export const acceptSuggestedPlan = async (req, res) => {
+  try {
+    const { dispute_id } = req.body;
+
+    const dispute = await OfficialDispute.findById(dispute_id);
+    if (!dispute) return res.status(404).json({ message: "Dispute not found" });
+
+    if (dispute.status !== "SUGGESTED_PLAN_REVIEW") {
+      return res.status(400).json({ message: "No suggested plan available for acceptance" });
+    }
+
+    const isCreator = dispute.creator_id.toString() === req.user._id.toString();
+    const isJoiner = dispute.joiner_id?.toString() === req.user._id.toString();
+
+    if (!isCreator && !isJoiner) {
+      return res.status(403).json({ message: "Not a participant" });
+    }
+
+    // Prevent double approval
+    if (isCreator && dispute.suggested_plan_approval?.creator_approved) {
+      return res.status(400).json({ message: "You have already accepted the plan" });
+    }
+    if (isJoiner && dispute.suggested_plan_approval?.joiner_approved) {
+      return res.status(400).json({ message: "You have already accepted the plan" });
+    }
+
+    if (isCreator) dispute.suggested_plan_approval.creator_approved = true;
+    else dispute.suggested_plan_approval.joiner_approved = true;
+
+    await dispute.save();
+
+    // Both accepted — complete the dispute directly, no negotiation needed
+    if (dispute.suggested_plan_approval.creator_approved && dispute.suggested_plan_approval.joiner_approved) {
+      dispute.status = "COMPLETED";
+      dispute.completed_at = new Date();
+
+      // Copy suggested plan as final plan
+      dispute.final_plan = dispute.suggested_plan;
+      dispute.final_plan_approval = {
+        creator_approved: true,
+        joiner_approved: true
+      };
+      await dispute.save();
+
+      if (req.io) {
+        req.io.to(dispute_id).emit("dispute_completed", {
+          status: "COMPLETED",
+          final_plan: dispute.final_plan,
+          message: "Both parties accepted the suggested plan. Dispute resolved successfully!",
+          timestamp: new Date()
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: "Both parties accepted. Dispute resolved successfully!",
+        status: "COMPLETED",
+        final_plan: dispute.final_plan
+      });
+    }
+
+    // Waiting for the other party
+    if (req.io) {
+      req.io.to(dispute_id).emit("suggested_plan_approval_update", {
+        creator_approved: dispute.suggested_plan_approval.creator_approved,
+        joiner_approved: dispute.suggested_plan_approval.joiner_approved,
+        message: "Acceptance recorded. Waiting for other party.",
+        timestamp: new Date()
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "Acceptance recorded. Waiting for other party.",
+      creator_approved: dispute.suggested_plan_approval.creator_approved,
+      joiner_approved: dispute.suggested_plan_approval.joiner_approved
+    });
+
+  } catch (err) {
+    console.error("Accept suggested plan error:", err);
+    res.status(500).json({ message: "Failed to accept plan", error: err.message });
+  }
+};
+
+// ENDPOINT: REJECT SUGGESTED PLAN → START NEGOTIATION
+// Either party can reject → moves to NEGOTIATION phase
+export const rejectSuggestedPlan = async (req, res) => {
+  try {
+    const { dispute_id, reason } = req.body;
+
+    const dispute = await OfficialDispute.findById(dispute_id);
+    if (!dispute) return res.status(404).json({ message: "Dispute not found" });
+
+    if (dispute.status !== "SUGGESTED_PLAN_REVIEW") {
+      return res.status(400).json({ message: "No suggested plan to reject" });
+    }
+
+    const isParticipant =
+      dispute.creator_id.toString() === req.user._id.toString() ||
+      dispute.joiner_id?.toString() === req.user._id.toString();
+
+    if (!isParticipant) return res.status(403).json({ message: "Not a participant" });
+
+    const isCreator = dispute.creator_id.toString() === req.user._id.toString();
+
+    // Reset approvals and move to negotiation
+    dispute.suggested_plan_approval = {
+      creator_approved: false,
+      joiner_approved: false
+    };
+    dispute.status = "NEGOTIATION";
+    await dispute.save();
+
+    console.log(`Suggested plan rejected by ${isCreator ? "creator" : "joiner"}, starting negotiation`);
+
+    if (req.io) {
+      req.io.to(dispute_id).emit("negotiation_started", {
+        status: "NEGOTIATION",
+        rejected_by: isCreator ? "creator" : "joiner",
+        reason: reason || "Party wants to negotiate further",
+        suggested_plan: dispute.suggested_plan,
+        creator_selections: dispute.solution_selections.creator_selected,
+        joiner_selections: dispute.solution_selections.joiner_selected,
+        message: "Suggested plan rejected. Starting negotiation round.",
+        timestamp: new Date()
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "Suggested plan rejected. Negotiation phase started.",
+      status: "NEGOTIATION",
+      rejected_by: isCreator ? "creator" : "joiner"
+    });
+
+  } catch (err) {
+    console.error("Reject suggested plan error:", err);
+    res.status(500).json({ message: "Failed to reject plan", error: err.message });
   }
 };
 
