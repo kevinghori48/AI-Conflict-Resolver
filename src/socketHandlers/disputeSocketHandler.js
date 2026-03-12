@@ -42,24 +42,20 @@ export const setupDisputeSocket = (io) => {
   io.on("connection", (socket) => {
     console.log(`\nNEW CONNECTION: ${socket.id} (Auth: ${socket.authenticated})\n`);
 
-    // Helper to require authentication before handling any event
     const requireAuth = (eventName, handler) => {
       socket.on(eventName, async (...args) => {
+        console.log(`[LISTEN] ${eventName} | user: ${socket.user?.email}`);
         if (!socket.authenticated) {
-          socket.emit("error", {
-            message: "Not authenticated",
-            event: eventName
-          });
+          socket.emit("error", { message: "Not authenticated", event: eventName });
+          console.log(`[EMIT] error | not authenticated | event: ${eventName}`);
           return;
         }
         try {
           await handler(...args);
         } catch (error) {
           console.error(`Error in ${eventName}:`, error);
-          socket.emit("error", {
-            message: `Error in ${eventName}`,
-            error: error.message
-          });
+          socket.emit("error", { message: `Error in ${eventName}`, error: error.message });
+          console.log(`[EMIT] error | handler exception | event: ${eventName}`);
         }
       });
     };
@@ -76,6 +72,7 @@ export const setupDisputeSocket = (io) => {
         disputeQuery = OfficialDispute.findOne({ invite_code: invite_code.toUpperCase() });
       } else {
         socket.emit("error", { message: "dispute_id or invite_code is required" });
+        console.log(`[EMIT] error | missing dispute_id or invite_code`);
         return;
       }
 
@@ -85,6 +82,7 @@ export const setupDisputeSocket = (io) => {
 
       if (!dispute) {
         socket.emit("error", { message: "Dispute not found" });
+        console.log(`[EMIT] error | dispute not found | ref: ${joinRef}`);
         return;
       }
 
@@ -93,19 +91,17 @@ export const setupDisputeSocket = (io) => {
 
       if (!isCreator && !isJoiner) {
         socket.emit("error", { message: "Not authorized to join this dispute" });
+        console.log(`[EMIT] error | not authorized | dispute: ${dispute._id}`);
         return;
       }
 
       const roomId = dispute._id.toString();
       socket.join(roomId);
-      const roomSize = io.sockets.adapter.rooms.get(roomId)?.size || 0;
-      console.log(`[ROOM_INFO] Room ${roomId} now has ${roomSize} user(s).`);
       socket.currentDispute = roomId;
       socket.userRole = isCreator ? "creator" : "joiner";
 
       console.log(`${socket.user.email} joined room ${roomId} as ${socket.userRole}`);
 
-      // Send full dispute state to the user who just joined
       socket.emit("dispute_state", {
         dispute,
         user_role: socket.userRole,
@@ -115,14 +111,15 @@ export const setupDisputeSocket = (io) => {
         status: dispute.status,
         timestamp: new Date()
       });
+      console.log(`[EMIT] dispute_state | to: ${socket.user.email} | dispute: ${roomId}`);
 
-      // Notify the other party
       socket.to(roomId).emit("user_online", {
         user_id: socket.userId,
         user_role: socket.userRole,
         user_name: `${socket.user.firstName} ${socket.user.lastName}`,
         timestamp: new Date()
       });
+      console.log(`[EMIT] user_online | to room: ${roomId} | user: ${socket.user.email}`);
     });
 
     // END CONVERSATION
@@ -154,7 +151,7 @@ export const setupDisputeSocket = (io) => {
       dispute.status = "AI_SUMMARIZING";
       await dispute.save();
       console.log(`[Success] Status updated to AI_SUMMARIZING`);
-      console.log(`[Success] Emitting conversation_ended to room: ${dispute_id}`);
+
       io.to(dispute_id).emit("conversation_ended", {
         ended_by: socket.userId,
         ended_by_role: socket.userRole,
@@ -162,19 +159,19 @@ export const setupDisputeSocket = (io) => {
         message: "Conversation ended. AI is generating summary...",
         timestamp: new Date()
       });
+      console.log(`[EMIT] conversation_ended | to room: ${dispute_id}`);
+
       if (callback) callback({ success: true, status: "AI_SUMMARIZING" });
       const disputeIdString = dispute._id.toString();
-      console.log(`[Wait] Starting summary generation in 1s for dispute: ${disputeIdString}`);
       setTimeout(async () => {
         try {
-          console.log(`[AI] Calling generateAISummary for dispute: ${disputeIdString}`);
+          console.log(`[CALL] generateAISummary | dispute: ${disputeIdString}`);
           const freshDispute = await OfficialDispute.findById(disputeIdString);
           if (!freshDispute) {
             console.error(`[Error] Fresh dispute not found: ${disputeIdString}`);
             return;
           }
-
-          await generateAISummary(freshDispute, disputeIdString, io); 
+          await generateAISummary(freshDispute, disputeIdString, io);
           console.log(`[Success] Summary generation completed for dispute: ${disputeIdString}`);
         } catch (error) {
           console.error(`[Error] Summary generation failed for dispute ${disputeIdString}:`, error);
@@ -182,6 +179,7 @@ export const setupDisputeSocket = (io) => {
             message: "Failed to generate summary. Please try again.",
             error: error.message
           });
+          console.log(`[EMIT] summary_generation_failed | to room: ${disputeIdString}`);
         }
       }, 1000);
     });
@@ -195,6 +193,7 @@ export const setupDisputeSocket = (io) => {
           const error = { success: false, message: "Message cannot be empty" };
           if (callback) callback(error);
           socket.emit("message_error", error);
+          console.log(`[EMIT] message_error | empty message | dispute: ${dispute_id}`);
           return;
         }
 
@@ -203,6 +202,7 @@ export const setupDisputeSocket = (io) => {
           const error = { success: false, message: "Dispute not found" };
           if (callback) callback(error);
           socket.emit("message_error", error);
+          console.log(`[EMIT] message_error | dispute not found | dispute: ${dispute_id}`);
           return;
         }
 
@@ -210,6 +210,7 @@ export const setupDisputeSocket = (io) => {
           const error = { success: false, message: "Not in conversation phase" };
           if (callback) callback(error);
           socket.emit("message_error", error);
+          console.log(`[EMIT] message_error | not in conversation phase | dispute: ${dispute_id}`);
           return;
         }
 
@@ -220,6 +221,7 @@ export const setupDisputeSocket = (io) => {
           const error = { success: false, message: "Not a participant" };
           if (callback) callback(error);
           socket.emit("message_error", error);
+          console.log(`[EMIT] message_error | not a participant | dispute: ${dispute_id}`);
           return;
         }
 
@@ -243,24 +245,19 @@ export const setupDisputeSocket = (io) => {
 
         if (callback) callback({ success: true, message, timestamp: new Date() });
 
-        // Broadcast to entire room including sender for UI consistency
         io.to(dispute_id).emit("new_message", {
           message,
           sender_role: senderRole,
           timestamp: new Date()
         });
-
-        console.log(`Message broadcast to room ${dispute_id}`);
+        console.log(`[EMIT] new_message | to room: ${dispute_id} | sender: ${socket.user.email} (${senderRole})`);
 
       } catch (error) {
         console.error("Send message error:", error);
-        const errorResponse = {
-          success: false,
-          message: "Failed to send message",
-          error: error.message
-        };
+        const errorResponse = { success: false, message: "Failed to send message", error: error.message };
         if (callback) callback(errorResponse);
         socket.emit("message_error", errorResponse);
+        console.log(`[EMIT] message_error | exception | dispute: ${dispute_id}`);
       }
     });
 
@@ -301,15 +298,12 @@ export const setupDisputeSocket = (io) => {
         const currentCount = dispute.conversation.audio_count[senderRole] || 0;
 
         if (currentCount >= 5) {
-          const error = {
-            success: false,
-            message: "Maximum 5 audio messages allowed. You've reached the limit."
-          };
+          const error = { success: false, message: "Maximum 5 audio messages allowed. You've reached the limit." };
           if (callback) callback(error);
+          console.log(`[EMIT] callback error | audio limit reached | dispute: ${dispute_id} | role: ${senderRole}`);
           return;
         }
 
-        // Save audio to disk
         const uploadsDir = path.join(__dirname, "../../uploads");
         if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
@@ -359,8 +353,7 @@ export const setupDisputeSocket = (io) => {
           remaining: 5 - dispute.conversation.audio_count[senderRole],
           timestamp: new Date()
         });
-
-        console.log(`Audio message broadcast to room ${dispute_id}`);
+        console.log(`[EMIT] new_message (audio) | to room: ${dispute_id} | sender: ${socket.user.email} (${senderRole})`);
 
       } catch (error) {
         console.error("Send audio error:", error);
@@ -370,7 +363,7 @@ export const setupDisputeSocket = (io) => {
 
     const getRoomDisputeId = (payload) => payload?.dispute_id || socket.currentDispute;
 
-    // ACCEPT SUGGESTED PLAN (Socket version)
+    // ACCEPT SUGGESTED PLAN
     requireAuth("accept_suggested_plan", async ({ dispute_id }, callback) => {
       const roomId = getRoomDisputeId({ dispute_id });
       if (!roomId) {
@@ -378,10 +371,14 @@ export const setupDisputeSocket = (io) => {
         return;
       }
 
-      // 1. Identify user role
       const dispute = await OfficialDispute.findById(roomId);
       if (!dispute) {
         if (callback) callback({ success: false, message: "Dispute not found" });
+        return;
+      }
+
+      if (dispute.status !== "SUGGESTED_PLAN_REVIEW") {
+        if (callback) callback({ success: false, message: "No suggested plan available for acceptance" });
         return;
       }
 
@@ -392,78 +389,58 @@ export const setupDisputeSocket = (io) => {
         return;
       }
 
-      const approvalField = isCreator
-        ? "suggested_plan_approval.creator_approved"
-        : "suggested_plan_approval.joiner_approved";
-
-      // 2. ATOMIC UPDATE: Record this user's approval
-      const updated = await OfficialDispute.findOneAndUpdate(
-        {
-          _id: roomId,
-          status: "SUGGESTED_PLAN_REVIEW",
-          [approvalField]: false
-        },
-        { $set: { [approvalField]: true } },
-        { new: true }
-      );
-
-      if (!updated) {
-        if (callback) callback({ success: false, message: "Already approved or incorrect status" });
+      if (isCreator && dispute.suggested_plan_approval?.creator_approved) {
+        if (callback) callback({ success: false, message: "You have already accepted the plan" });
+        return;
+      }
+      if (isJoiner && dispute.suggested_plan_approval?.joiner_approved) {
+        if (callback) callback({ success: false, message: "You have already accepted the plan" });
         return;
       }
 
-      // 3. Check if both have now approved
-      if (updated.suggested_plan_approval.creator_approved && updated.suggested_plan_approval.joiner_approved) {
-        // 4. ATOMIC TRANSITION TO COMPLETED
-        const finalized = await OfficialDispute.findOneAndUpdate(
-          { _id: roomId, status: "SUGGESTED_PLAN_REVIEW" },
-          {
-            $set: {
-              status: "COMPLETED",
-              completed_at: new Date(),
-              final_plan: updated.suggested_plan,
-              final_plan_approval: { creator_approved: true, joiner_approved: true }
-            }
-          },
-          { new: true }
-        );
+      if (isCreator) dispute.suggested_plan_approval.creator_approved = true;
+      else dispute.suggested_plan_approval.joiner_approved = true;
 
-        if (finalized) {
-          // LOGGING ADDED HERE
-          console.log(`\n[DISPUTE_COMPLETED] via Suggested Plan Acceptance`);
-          console.log(`ID: ${roomId} | Completed At: ${finalized.completed_at.toISOString()}`);
-          console.log(`Final approval triggered by: ${socket.user.email}\n`);
+      await dispute.save();
 
-          io.to(roomId).emit("dispute_completed", {
-            status: "COMPLETED",
-            final_plan: finalized.final_plan,
-            message: "Both parties accepted the suggested plan. Dispute resolved successfully!",
-            timestamp: new Date()
-          });
+      if (dispute.suggested_plan_approval.creator_approved && dispute.suggested_plan_approval.joiner_approved) {
+        dispute.status = "COMPLETED";
+        dispute.completed_at = new Date();
+        dispute.final_plan = dispute.suggested_plan;
+        dispute.final_plan_approval = { creator_approved: true, joiner_approved: true };
+        await dispute.save();
 
-          if (callback) callback({ success: true, status: "COMPLETED", final_plan: finalized.final_plan });
-        }
-      } else {
-        // Only one party has approved so far
-        io.to(roomId).emit("suggested_plan_approval_update", {
-          creator_approved: updated.suggested_plan_approval.creator_approved,
-          joiner_approved: updated.suggested_plan_approval.joiner_approved,
-          message: "Acceptance recorded. Waiting for other party.",
+        io.to(roomId).emit("dispute_completed", {
+          status: "COMPLETED",
+          final_plan: dispute.final_plan,
+          message: "Both parties accepted the suggested plan. Dispute resolved successfully!",
           timestamp: new Date()
         });
+        console.log(`[EMIT] dispute_completed | to room: ${roomId} | both accepted suggested plan`);
 
-        if (callback) {
-          callback({
-            success: true,
-            status: updated.status,
-            creator_approved: updated.suggested_plan_approval.creator_approved,
-            joiner_approved: updated.suggested_plan_approval.joiner_approved
-          });
-        }
+        if (callback) callback({ success: true, status: "COMPLETED", final_plan: dispute.final_plan });
+        return;
+      }
+
+      io.to(roomId).emit("suggested_plan_approval_update", {
+        creator_approved: dispute.suggested_plan_approval.creator_approved,
+        joiner_approved: dispute.suggested_plan_approval.joiner_approved,
+        message: "Acceptance recorded. Waiting for other party.",
+        timestamp: new Date()
+      });
+      console.log(`[EMIT] suggested_plan_approval_update | to room: ${roomId} | creator: ${dispute.suggested_plan_approval.creator_approved} joiner: ${dispute.suggested_plan_approval.joiner_approved}`);
+
+      if (callback) {
+        callback({
+          success: true,
+          status: dispute.status,
+          creator_approved: dispute.suggested_plan_approval.creator_approved,
+          joiner_approved: dispute.suggested_plan_approval.joiner_approved
+        });
       }
     });
 
-    // REJECT SUGGESTED PLAN → START NEGOTIATION (Socket version)
+    // REJECT SUGGESTED PLAN → START NEGOTIATION
     requireAuth("reject_suggested_plan", async ({ dispute_id, reason }, callback) => {
       const roomId = getRoomDisputeId({ dispute_id });
       if (!roomId) {
@@ -503,11 +480,12 @@ export const setupDisputeSocket = (io) => {
         message: "Suggested plan rejected. Starting negotiation round.",
         timestamp: new Date()
       });
+      console.log(`[EMIT] negotiation_started | to room: ${roomId} | rejected by: ${isCreator ? "creator" : "joiner"}`);
 
       if (callback) callback({ success: true, status: "NEGOTIATION" });
     });
 
-    // POST NEGOTIATION COMMENT (Socket version)
+    // POST NEGOTIATION COMMENT
     requireAuth("post_negotiation_comment", async ({ dispute_id, text }, callback) => {
       const roomId = getRoomDisputeId({ dispute_id });
       if (!roomId) {
@@ -561,11 +539,12 @@ export const setupDisputeSocket = (io) => {
         joiner_ready: false,
         timestamp: new Date()
       });
+      console.log(`[EMIT] new_negotiation_comment | to room: ${roomId} | sender: ${socket.user.email} (${senderRole})`);
 
       if (callback) callback({ success: true, comment: savedComment });
     });
 
-    // SIGNAL AGREEMENT (Socket version) → triggers final plan generation
+    // SIGNAL AGREEMENT → triggers final plan generation
     requireAuth("signal_agreement", async ({ dispute_id }, callback) => {
       const roomId = getRoomDisputeId({ dispute_id });
       if (!roomId) {
@@ -603,10 +582,12 @@ export const setupDisputeSocket = (io) => {
           message: "Both parties agreed. AI is constructing the final resolution plan...",
           timestamp: new Date()
         });
+        console.log(`[EMIT] generating_final_plan | to room: ${roomId} | both parties agreed`);
 
         const disputeIdString = dispute._id.toString();
         setTimeout(async () => {
           try {
+            console.log(`[CALL] generateFinalPlan | dispute: ${disputeIdString}`);
             const freshDispute = await OfficialDispute.findById(disputeIdString);
             if (!freshDispute) return;
             await generateFinalPlan(freshDispute, disputeIdString, io);
@@ -621,6 +602,7 @@ export const setupDisputeSocket = (io) => {
               message: "Failed to generate final plan. Please try again.",
               error: error.message
             });
+            console.log(`[EMIT] final_plan_failed | to room: ${disputeIdString}`);
           }
         }, 1000);
 
@@ -634,6 +616,7 @@ export const setupDisputeSocket = (io) => {
         message: "Agreement signal recorded. Waiting for other party.",
         timestamp: new Date()
       });
+      console.log(`[EMIT] agreement_update | to room: ${roomId} | creator: ${dispute.negotiation.creator_ready} joiner: ${dispute.negotiation.joiner_ready}`);
 
       if (callback) {
         callback({
@@ -645,7 +628,7 @@ export const setupDisputeSocket = (io) => {
       }
     });
 
-    // GET SUGGESTED PLAN (Socket version)
+    // GET SUGGESTED PLAN
     requireAuth("get_suggested_plan", async ({ dispute_id }, callback) => {
       const roomId = getRoomDisputeId({ dispute_id });
       if (!roomId) {
@@ -671,6 +654,7 @@ export const setupDisputeSocket = (io) => {
         return;
       }
 
+      console.log(`[EMIT] callback get_suggested_plan | to: ${socket.user.email} | dispute: ${roomId}`);
       if (callback) {
         callback({
           success: true,
@@ -687,7 +671,7 @@ export const setupDisputeSocket = (io) => {
       }
     });
 
-    // GET NEGOTIATION COMMENTS (Socket version)
+    // GET NEGOTIATION COMMENTS
     requireAuth("get_negotiation_comments", async ({ dispute_id }, callback) => {
       const roomId = getRoomDisputeId({ dispute_id });
       if (!roomId) {
@@ -709,6 +693,7 @@ export const setupDisputeSocket = (io) => {
         return;
       }
 
+      console.log(`[EMIT] callback get_negotiation_comments | to: ${socket.user.email} | count: ${dispute.negotiation.comments.length}`);
       if (callback) {
         callback({
           success: true,
@@ -721,7 +706,7 @@ export const setupDisputeSocket = (io) => {
       }
     });
 
-    // APPROVE FINAL PLAN (Socket version)
+    // APPROVE FINAL PLAN
     requireAuth("approve_final_plan", async ({ dispute_id }, callback) => {
       const roomId = getRoomDisputeId({ dispute_id });
       if (!roomId) {
@@ -730,59 +715,73 @@ export const setupDisputeSocket = (io) => {
       }
 
       const dispute = await OfficialDispute.findById(roomId);
-      if (!dispute || dispute.status !== "FINAL_PLAN_REVIEW") {
-        if (callback) callback({ success: false, message: "Final plan not ready for approval" });
+      if (!dispute) {
+        if (callback) callback({ success: false, message: "Dispute not found" });
+        return;
+      }
+
+      if (dispute.status !== "FINAL_PLAN_REVIEW") {
+        if (callback) callback({ success: false, message: "Final plan is not ready for approval" });
         return;
       }
 
       const isCreator = dispute.creator_id.toString() === socket.userId;
-      const approvalField = isCreator ? "final_plan_approval.creator_approved" : "final_plan_approval.joiner_approved";
-
-      // Atomic update: only set to true if it was false
-      const updated = await OfficialDispute.findOneAndUpdate(
-        { _id: roomId, status: "FINAL_PLAN_REVIEW", [approvalField]: false },
-        { $set: { [approvalField]: true } },
-        { new: true }
-      );
-
-      if (!updated) {
-        if (callback) callback({ success: false, message: "Already approved or state changed" });
+      const isJoiner = dispute.joiner_id?.toString() === socket.userId;
+      if (!isCreator && !isJoiner) {
+        if (callback) callback({ success: false, message: "Not authorized to approve this plan" });
         return;
       }
 
-      if (updated.final_plan_approval.creator_approved && updated.final_plan_approval.joiner_approved) {
-        // Atomic transition to completed to prevent double-logging/double-emits
-        const finalized = await OfficialDispute.findOneAndUpdate(
-          { _id: roomId, status: "FINAL_PLAN_REVIEW" },
-          { $set: { status: "COMPLETED", completed_at: new Date() } },
-          { new: true }
-        );
+      if (isCreator && dispute.final_plan_approval.creator_approved) {
+        if (callback) callback({ success: false, message: "You have already approved the plan" });
+        return;
+      }
+      if (isJoiner && dispute.final_plan_approval.joiner_approved) {
+        if (callback) callback({ success: false, message: "You have already approved the plan" });
+        return;
+      }
 
-        if (finalized) {
-          console.log(`\n[EVENT: DISPUTE_COMPLETED] Final Plan Approved`);
-          console.log(`ID: ${roomId} | Final User: ${socket.user.email}\n`);
+      if (isCreator) dispute.final_plan_approval.creator_approved = true;
+      else dispute.final_plan_approval.joiner_approved = true;
 
-          io.to(roomId).emit("dispute_completed", {
-            status: "COMPLETED",
-            final_plan: finalized.final_plan,
-            message: "Both parties approved the plan. Dispute resolved successfully!",
-            timestamp: new Date()
-          });
+      await dispute.save();
 
-          if (callback) callback({ success: true, status: "COMPLETED", final_plan: finalized.final_plan });
-        }
-      } else {
-        io.to(roomId).emit("plan_approval_update", {
-          creator_approved: updated.final_plan_approval.creator_approved,
-          joiner_approved: updated.final_plan_approval.joiner_approved,
-          message: "Approval recorded. Waiting for other party.",
+      if (dispute.final_plan_approval.creator_approved && dispute.final_plan_approval.joiner_approved) {
+        dispute.status = "COMPLETED";
+        dispute.completed_at = new Date();
+        await dispute.save();
+
+        io.to(roomId).emit("dispute_completed", {
+          status: "COMPLETED",
+          final_plan: dispute.final_plan,
+          message: "Both parties approved the plan. Dispute resolved successfully!",
           timestamp: new Date()
         });
-        if (callback) callback({ success: true, status: updated.status });
+        console.log(`[EMIT] dispute_completed | to room: ${roomId} | both approved final plan`);
+
+        if (callback) callback({ success: true, status: "COMPLETED", final_plan: dispute.final_plan });
+        return;
+      }
+
+      io.to(roomId).emit("plan_approval_update", {
+        creator_approved: dispute.final_plan_approval.creator_approved,
+        joiner_approved: dispute.final_plan_approval.joiner_approved,
+        message: "Approval recorded. Waiting for other party.",
+        timestamp: new Date()
+      });
+      console.log(`[EMIT] plan_approval_update | to room: ${roomId} | creator: ${dispute.final_plan_approval.creator_approved} joiner: ${dispute.final_plan_approval.joiner_approved}`);
+
+      if (callback) {
+        callback({
+          success: true,
+          status: dispute.status,
+          creator_approved: dispute.final_plan_approval.creator_approved,
+          joiner_approved: dispute.final_plan_approval.joiner_approved
+        });
       }
     });
 
-    // GET FINAL PLAN (Socket version)
+    // GET FINAL PLAN
     requireAuth("get_final_plan", async ({ dispute_id }, callback) => {
       const roomId = getRoomDisputeId({ dispute_id });
       if (!roomId) {
@@ -808,6 +807,7 @@ export const setupDisputeSocket = (io) => {
         return;
       }
 
+      console.log(`[EMIT] callback get_final_plan | to: ${socket.user.email} | dispute: ${roomId}`);
       if (callback) {
         callback({
           success: true,
@@ -824,42 +824,72 @@ export const setupDisputeSocket = (io) => {
       }
     });
 
-    // REPORT FINAL PLAN ISSUE (Socket version)
-    // Matches HTTP behavior: stores feedback; counts as implicit approval so dispute can complete.
+    // REPORT FINAL PLAN ISSUE
     requireAuth("report_final_plan_issue", async ({ dispute_id, feedback }, callback) => {
       const roomId = getRoomDisputeId({ dispute_id });
-      // ... (keep your existing validation logic)
-
-      // Use atomic push and set
-      const isCreator = dispute.creator_id.toString() === socket.userId;
-      const approvalField = isCreator ? "final_plan_approval.creator_approved" : "final_plan_approval.joiner_approved";
-
-      const updated = await OfficialDispute.findOneAndUpdate(
-        { _id: roomId },
-        {
-          $push: { final_plan_reports: { reporter_id: socket.userId, feedback: feedback.trim(), reported_at: new Date() } },
-          $set: { [approvalField]: true }
-        },
-        { new: true }
-      );
-
-      if (updated.final_plan_approval.creator_approved && updated.final_plan_approval.joiner_approved && updated.status !== "COMPLETED") {
-        updated.status = "COMPLETED";
-        updated.completed_at = new Date();
-        await updated.save();
-
-        console.log(`\n[EVENT: DISPUTE_COMPLETED] via Issue Report`);
-        console.log(`ID: ${roomId} | Reporter: ${socket.user.email}\n`);
-
-        io.to(roomId).emit("dispute_completed", {
-          status: "COMPLETED",
-          final_plan: updated.final_plan,
-          message: "Dispute has been closed via report.",
-          timestamp: new Date()
-        });
+      if (!roomId) {
+        if (callback) callback({ success: false, message: "dispute_id is required" });
+        return;
+      }
+      if (!feedback || feedback.trim() === "") {
+        if (callback) callback({ success: false, message: "Please provide feedback about the issue" });
+        return;
       }
 
-      if (callback) callback({ success: true, status: updated.status });
+      const dispute = await OfficialDispute.findById(roomId);
+      if (!dispute) {
+        if (callback) callback({ success: false, message: "Dispute not found" });
+        return;
+      }
+
+      if (dispute.status !== "FINAL_PLAN_REVIEW" && dispute.status !== "COMPLETED") {
+        if (callback) callback({ success: false, message: "No final plan to report on" });
+        return;
+      }
+
+      const isCreator = dispute.creator_id.toString() === socket.userId;
+      const isJoiner = dispute.joiner_id?.toString() === socket.userId;
+      if (!isCreator && !isJoiner) {
+        if (callback) callback({ success: false, message: "Not a participant" });
+        return;
+      }
+
+      dispute.final_plan_reports.push({
+        reporter_id: socket.userId,
+        reporter_role: isCreator ? "creator" : "joiner",
+        feedback: feedback.trim(),
+        reported_at: new Date()
+      });
+
+      if (isCreator) dispute.final_plan_approval.creator_approved = true;
+      else dispute.final_plan_approval.joiner_approved = true;
+
+      if (dispute.final_plan_approval.creator_approved && dispute.final_plan_approval.joiner_approved) {
+        dispute.status = "COMPLETED";
+        dispute.completed_at = dispute.completed_at || new Date();
+      }
+
+      await dispute.save();
+
+      io.to(roomId).emit("final_plan_issue_reported", {
+        status: dispute.status,
+        reporter_role: isCreator ? "creator" : "joiner",
+        feedback: feedback.trim(),
+        timestamp: new Date()
+      });
+      console.log(`[EMIT] final_plan_issue_reported | to room: ${roomId} | reporter: ${socket.user.email}`);
+
+      if (dispute.status === "COMPLETED") {
+        io.to(roomId).emit("dispute_completed", {
+          status: "COMPLETED",
+          final_plan: dispute.final_plan,
+          message: "Dispute has been closed.",
+          timestamp: new Date()
+        });
+        console.log(`[EMIT] dispute_completed | to room: ${roomId} | closed after issue report`);
+      }
+
+      if (callback) callback({ success: true, status: dispute.status, message: "Issue reported. Thank you for your feedback." });
     });
 
     // TYPING INDICATORS
@@ -870,6 +900,7 @@ export const setupDisputeSocket = (io) => {
         user_name: `${socket.user.firstName} ${socket.user.lastName}`,
         timestamp: new Date()
       });
+      console.log(`[EMIT] user_typing | to room: ${dispute_id} | user: ${socket.user.email}`);
     });
 
     requireAuth("stop_typing", ({ dispute_id }) => {
@@ -878,33 +909,20 @@ export const setupDisputeSocket = (io) => {
         user_role: socket.userRole,
         timestamp: new Date()
       });
+      console.log(`[EMIT] user_stop_typing | to room: ${dispute_id} | user: ${socket.user.email}`);
     });
 
     // MESSAGE STATUS UPDATES
     requireAuth("message_delivered", async ({ message_id, dispute_id }) => {
-      await DisputeMessage.findByIdAndUpdate(message_id, {
-        status: "delivered",
-        delivered_at: new Date()
-      });
-
-      socket.to(dispute_id).emit("message_status_update", {
-        message_id,
-        status: "delivered",
-        timestamp: new Date()
-      });
+      await DisputeMessage.findByIdAndUpdate(message_id, { status: "delivered", delivered_at: new Date() });
+      socket.to(dispute_id).emit("message_status_update", { message_id, status: "delivered", timestamp: new Date() });
+      console.log(`[EMIT] message_status_update (delivered) | to room: ${dispute_id} | message: ${message_id}`);
     });
 
     requireAuth("message_read", async ({ message_id, dispute_id }) => {
-      await DisputeMessage.findByIdAndUpdate(message_id, {
-        status: "read",
-        read_at: new Date()
-      });
-
-      socket.to(dispute_id).emit("message_status_update", {
-        message_id,
-        status: "read",
-        timestamp: new Date()
-      });
+      await DisputeMessage.findByIdAndUpdate(message_id, { status: "read", read_at: new Date() });
+      socket.to(dispute_id).emit("message_status_update", { message_id, status: "read", timestamp: new Date() });
+      console.log(`[EMIT] message_status_update (read) | to room: ${dispute_id} | message: ${message_id}`);
     });
 
     // AUDIO RECORDING INDICATORS
@@ -915,6 +933,7 @@ export const setupDisputeSocket = (io) => {
         user_name: `${socket.user.firstName} ${socket.user.lastName}`,
         timestamp: new Date()
       });
+      console.log(`[EMIT] user_recording_audio | to room: ${dispute_id} | user: ${socket.user.email}`);
     });
 
     requireAuth("audio_recording_stop", ({ dispute_id }) => {
@@ -923,6 +942,7 @@ export const setupDisputeSocket = (io) => {
         user_role: socket.userRole,
         timestamp: new Date()
       });
+      console.log(`[EMIT] user_stopped_recording | to room: ${dispute_id} | user: ${socket.user.email}`);
     });
 
     // LEAVE DISPUTE ROOM
@@ -934,14 +954,10 @@ export const setupDisputeSocket = (io) => {
         user_name: `${socket.user.firstName} ${socket.user.lastName}`,
         timestamp: new Date()
       });
+      console.log(`[EMIT] user_left | to room: ${dispute_id} | user: ${socket.user.email}`);
       socket.currentDispute = null;
       socket.userRole = null;
       console.log(`${socket.user.email} left dispute`);
-    });
-
-    // HEARTBEAT/PING
-    socket.on("pong", () => {
-      console.log(`[HEARTBEAT] ${socket.user?.email || 'Anonymous'} ping confirmed`);
     });
 
     // DISCONNECT
@@ -955,6 +971,7 @@ export const setupDisputeSocket = (io) => {
           reason,
           timestamp: new Date()
         });
+        console.log(`[EMIT] user_offline | to room: ${socket.currentDispute} | user: ${socket.user?.email}`);
       }
     });
 
