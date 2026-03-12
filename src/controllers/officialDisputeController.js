@@ -209,8 +209,8 @@ export const joinDispute = async (req, res) => {
     await dispute.populate("joiner_id", "firstName lastName email");
 
     // FIX: was using undefined 'dispute_id' variable — use dispute._id.toString()
-    if (req.io) {
-      req.io.to(dispute._id.toString()).emit("joiner_connected", {
+    if (req.app.get('io')) {
+      req.app.get('io').to(dispute._id.toString()).emit("joiner_connected", {
         joiner_id: req.user._id,
         joiner_name: `${req.user.firstName} ${req.user.lastName}`,
         status: "CONVERSATION",
@@ -292,8 +292,8 @@ export const sendAudioMessage = async (req, res) => {
     await dispute.save();
     await message.populate("sender_id", "firstName lastName email");
 
-    if (req.io) {
-      req.io.to(dispute_id).emit("new_message", {
+    if (req.app.get('io')) {
+      req.app.get('io').to(dispute_id).emit("new_message", {
         message,
         sender_role: senderRole,
         audio_count: dispute.conversation.audio_count,
@@ -421,7 +421,7 @@ export const endConversation = async (req, res) => {
     dispute.status = "AI_SUMMARIZING";
     await dispute.save();
 
-    const ioInstance = req.io || req.app.get("io");
+    const ioInstance = req.app.get('io');
 
     if (ioInstance) {
       ioInstance.to(dispute_id).emit("conversation_ended", {
@@ -585,8 +585,8 @@ export const reportSummary = async (req, res) => {
     dispute.ai_summary.regeneration_count = (dispute.ai_summary.regeneration_count || 0) + 1;
     await dispute.save();
 
-    if (req.io) {
-      req.io.to(dispute_id).emit("summary_regenerating", {
+    if (req.app.get('io')) {
+      req.app.get('io').to(dispute_id).emit("summary_regenerating", {
         message: "Regenerating summary based on your feedback...",
         regeneration_count: dispute.ai_summary.regeneration_count,
         timestamp: new Date()
@@ -650,8 +650,8 @@ OUTPUT JSON:
       dispute.summary_approval.joiner_approved = false;
       await dispute.save();
 
-      if (req.io) {
-        req.io.to(dispute_id).emit("summary_updated", {
+      if (req.app.get('io')) {
+        req.app.get('io').to(dispute_id).emit("summary_updated", {
           status: "SUMMARY_REVIEW",
           summary: dispute.ai_summary,
           message: "Summary has been regenerated based on feedback",
@@ -669,8 +669,8 @@ OUTPUT JSON:
     } catch (aiErr) {
       dispute.status = "SUMMARY_REVIEW";
       await dispute.save();
-      if (req.io) {
-        req.io.to(dispute_id).emit("summary_generation_failed", {
+      if (req.app.get('io')) {
+        req.app.get('io').to(dispute_id).emit("summary_generation_failed", {
           message: "Failed to regenerate summary. Please try again.",
           error: aiErr.message
         });
@@ -740,8 +740,8 @@ export const approveSummary = async (req, res) => {
         });
       }
 
-      if (req.io) {
-        req.io.to(dispute_id).emit("generating_solutions", {
+      if (req.app.get('io')) {
+        req.app.get('io').to(dispute_id).emit("generating_solutions", {
           status: "AI_SUMMARIZING",
           message: "Both parties approved. Generating solution options...",
           timestamp: new Date()
@@ -749,7 +749,8 @@ export const approveSummary = async (req, res) => {
       }
 
       const disputeIdString = dispute_id;
-      const ioInstance = req.io;
+      const ioInstance = req.app.get('io');
+      console.log(`[approveSummary] ioInstance resolved: ${ioInstance ? "OK" : "NULL — check io middleware"}`);
 
       setTimeout(async () => {
         try {
@@ -790,8 +791,8 @@ export const approveSummary = async (req, res) => {
       });
     }
 
-    if (req.io) {
-      req.io.to(dispute_id).emit("approval_update", {
+    if (req.app.get('io')) {
+      req.app.get('io').to(dispute_id).emit("approval_update", {
         creator_approved: updated.summary_approval.creator_approved,
         joiner_approved: updated.summary_approval.joiner_approved,
         message: "Approval recorded. Waiting for other party.",
@@ -1002,8 +1003,8 @@ export const selectSolutions = async (req, res) => {
       dispute.status = "AI_SUMMARIZING";
       await dispute.save();
 
-      if (req.io) {
-        req.io.to(dispute_id).emit("generating_suggested_plan", {
+      if (req.app.get('io')) {
+        req.app.get('io').to(dispute_id).emit("generating_suggested_plan", {
           status: "AI_SUMMARIZING",
           creator_selections: creatorVotes,
           joiner_selections: joinerVotes,
@@ -1014,7 +1015,8 @@ export const selectSolutions = async (req, res) => {
       }
 
       const disputeIdString = dispute._id.toString();
-      const ioInstance = req.io;
+      const ioInstance = req.app.get('io');
+      console.log(`[selectSolutions] ioInstance resolved: ${ioInstance ? "OK" : "NULL — check io middleware"}`);
 
       setTimeout(async () => {
         try {
@@ -1041,8 +1043,8 @@ export const selectSolutions = async (req, res) => {
       });
     }
 
-    if (req.io) {
-      req.io.to(dispute_id).emit("selection_update", {
+    if (req.app.get('io')) {
+      req.app.get('io').to(dispute_id).emit("selection_update", {
         message: "Selection recorded. Waiting for other party.",
         has_creator_selected: creatorVotes.length > 0,
         has_joiner_selected: joinerVotes.length > 0,
@@ -1225,8 +1227,8 @@ export const acceptSuggestedPlan = async (req, res) => {
       dispute.final_plan_approval = { creator_approved: true, joiner_approved: true };
       await dispute.save();
 
-      if (req.io) {
-        req.io.to(dispute_id).emit("dispute_completed", {
+      if (req.app.get('io')) {
+        req.app.get('io').to(dispute_id).emit("dispute_completed", {
           status: "COMPLETED",
           final_plan: dispute.final_plan,
           message: "Both parties accepted the suggested plan. Dispute resolved successfully!",
@@ -1242,8 +1244,8 @@ export const acceptSuggestedPlan = async (req, res) => {
       });
     }
 
-    if (req.io) {
-      req.io.to(dispute_id).emit("suggested_plan_approval_update", {
+    if (req.app.get('io')) {
+      req.app.get('io').to(dispute_id).emit("suggested_plan_approval_update", {
         creator_approved: dispute.suggested_plan_approval.creator_approved,
         joiner_approved: dispute.suggested_plan_approval.joiner_approved,
         message: "Acceptance recorded. Waiting for other party.",
@@ -1286,8 +1288,8 @@ export const rejectSuggestedPlan = async (req, res) => {
     dispute.status = "NEGOTIATION";
     await dispute.save();
 
-    if (req.io) {
-      req.io.to(dispute_id).emit("negotiation_started", {
+    if (req.app.get('io')) {
+      req.app.get('io').to(dispute_id).emit("negotiation_started", {
         status: "NEGOTIATION",
         rejected_by: isCreator ? "creator" : "joiner",
         reason: reason || "Party wants to negotiate further",
@@ -1352,11 +1354,11 @@ export const postNegotiationComment = async (req, res) => {
 
     const savedComment = dispute.negotiation.comments[dispute.negotiation.comments.length - 1];
 
-    if (req.io) {
+    if (req.app.get('io')) {
       const commentPlain = typeof savedComment.toObject === "function"
         ? savedComment.toObject()
         : { ...savedComment };
-      req.io.to(dispute_id).emit("new_negotiation_comment", {
+      req.app.get('io').to(dispute_id).emit("new_negotiation_comment", {
         comment: {
           ...commentPlain,
           sender_name: `${req.user.firstName} ${req.user.lastName}`
@@ -1437,8 +1439,8 @@ export const signalAgreement = async (req, res) => {
       dispute.status = "AI_SUMMARIZING";
       await dispute.save();
 
-      if (req.io) {
-        req.io.to(dispute_id).emit("generating_final_plan", {
+      if (req.app.get('io')) {
+        req.app.get('io').to(dispute_id).emit("generating_final_plan", {
           status: "AI_SUMMARIZING",
           message: "Both parties agreed. AI is constructing the final resolution plan...",
           timestamp: new Date()
@@ -1446,7 +1448,8 @@ export const signalAgreement = async (req, res) => {
       }
 
       const disputeIdString = dispute_id;
-      const ioInstance = req.io;
+      const ioInstance = req.app.get('io');
+      console.log(`[signalAgreement] ioInstance resolved: ${ioInstance ? "OK" : "NULL — check io middleware"}`);
 
       setTimeout(async () => {
         try {
@@ -1475,8 +1478,8 @@ export const signalAgreement = async (req, res) => {
       });
     }
 
-    if (req.io) {
-      req.io.to(dispute_id).emit("agreement_update", {
+    if (req.app.get('io')) {
+      req.app.get('io').to(dispute_id).emit("agreement_update", {
         creator_ready: dispute.negotiation.creator_ready,
         joiner_ready: dispute.negotiation.joiner_ready,
         message: "Agreement signal recorded. Waiting for other party.",
@@ -1625,8 +1628,8 @@ export const approveFinalPlan = async (req, res) => {
       dispute.completed_at = new Date();
       await dispute.save();
 
-      if (req.io) {
-        req.io.to(dispute_id).emit("dispute_completed", {
+      if (req.app.get('io')) {
+        req.app.get('io').to(dispute_id).emit("dispute_completed", {
           status: "COMPLETED",
           final_plan: dispute.final_plan,
           message: "Both parties approved the plan. Dispute resolved successfully!",
@@ -1642,8 +1645,8 @@ export const approveFinalPlan = async (req, res) => {
       });
     }
 
-    if (req.io) {
-      req.io.to(dispute_id).emit("plan_approval_update", {
+    if (req.app.get('io')) {
+      req.app.get('io').to(dispute_id).emit("plan_approval_update", {
         creator_approved: dispute.final_plan_approval.creator_approved,
         joiner_approved: dispute.final_plan_approval.joiner_approved,
         message: "Approval recorded. Waiting for other party.",
@@ -1703,8 +1706,8 @@ export const reportFinalPlanIssue = async (req, res) => {
 
     await dispute.save();
 
-    if (dispute.status === "COMPLETED" && req.io) {
-      req.io.to(dispute_id).emit("dispute_completed", {
+    if (dispute.status === "COMPLETED" && req.app.get('io')) {
+      req.app.get('io').to(dispute_id).emit("dispute_completed", {
         status: "COMPLETED",
         final_plan: dispute.final_plan,
         message: "Dispute has been closed.",
@@ -1844,8 +1847,8 @@ export const deleteDispute = async (req, res) => {
     await DisputeMessage.deleteMany({ dispute_id });
     await OfficialDispute.findByIdAndDelete(dispute_id);
 
-    if (req.io) {
-      req.io.to(dispute_id).emit("dispute_deleted", {
+    if (req.app.get('io')) {
+      req.app.get('io').to(dispute_id).emit("dispute_deleted", {
         message: "This dispute has been deleted by the creator",
         timestamp: new Date()
       });
