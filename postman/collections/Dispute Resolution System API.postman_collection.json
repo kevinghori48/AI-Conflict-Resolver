@@ -870,42 +870,42 @@
   },
   "variable": [
     {
-      "id": "5530b49b-36b0-45d4-82d3-2ade1609095b",
+      "id": "f683fd3a-3c0a-462b-9019-5027cd935eb1",
       "key": "baseUrl",
       "value": "http://localhost:5001",
       "type": "string"
     },
     {
-      "id": "f500fa96-a4b0-461a-b52b-0b9e7eb49be2",
+      "id": "8ba60dae-b8cf-4a61-9ce5-ccdb97f5097e",
       "key": "authToken",
       "value": "",
       "type": "string"
     },
     {
-      "id": "77995475-34b5-446d-9c7f-86f944d7ff81",
+      "id": "7ac05bd9-8b03-40d7-a4bb-886f797201cc",
       "key": "userId",
       "value": "",
       "type": "string"
     },
     {
-      "id": "8e5be1b7-0dca-4576-a85e-410af7afdb57",
+      "id": "a344b5e5-b6a5-4ddb-8068-484028b0d46c",
       "key": "disputeId",
       "value": "",
       "type": "string"
     },
     {
-      "id": "c2535a2b-0fea-4a6a-ad12-dba578a9dbf6",
+      "id": "2ef49e46-3888-4238-947c-424f912f8b37",
       "key": "inviteCode",
       "value": "",
       "type": "string"
     },
     {
-      "id": "295cfe28-0dc4-4add-975d-6f512d973f3f",
+      "id": "5da37bd8-a2aa-4e35-ba84-8fe85e2d9d30",
       "key": "token_a",
       "value": ""
     },
     {
-      "id": "870b6480-5d64-4c3f-b204-ab61e1fa9a12",
+      "id": "e6eac373-2388-4a6d-aa94-96362fc77511",
       "key": "token_b",
       "value": ""
     }

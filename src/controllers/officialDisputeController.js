@@ -469,6 +469,7 @@ export const endConversation = async (req, res) => {
 
 export async function generateAISummary(dispute, dispute_id, io) {
   try {
+    console.log(`[generateAISummary] START | dispute: ${dispute._id}`);
     const messages = await DisputeMessage.find({ dispute_id: dispute._id.toString() })
       .populate("sender_id", "firstName lastName email")
       .sort({ timestamp: 1 });
@@ -526,6 +527,7 @@ OUTPUT JSON:
     };
     dispute.status = "SUMMARY_REVIEW";
     await dispute.save();
+    console.log(`[generateAISummary] [SAVE] status → SUMMARY_REVIEW | dispute: ${dispute._id}`);
 
     if (io) {
       io.to(dispute_id).emit("summary_ready", {
@@ -534,11 +536,16 @@ OUTPUT JSON:
         message: "Summary generated successfully. Please review.",
         timestamp: new Date()
       });
+      console.log(`[EMIT] summary_ready | to room: ${dispute_id} | key_points: ${dispute.ai_summary.key_points.length}`);
+    } else {
+      console.warn(`[generateAISummary] io is null — summary_ready NOT emitted | dispute: ${dispute._id}`);
     }
+    console.log(`[generateAISummary] SUCCESS | dispute: ${dispute._id}`);
   } catch (error) {
-    console.error("generateAISummary failed:", error);
+    console.error(`[generateAISummary] FAILED | dispute: ${dispute._id}`, error);
     dispute.status = "CONVERSATION";
     await dispute.save();
+    console.log(`[generateAISummary] [SAVE] rolled back → CONVERSATION | dispute: ${dispute._id}`);
     throw error;
   }
 }
@@ -838,6 +845,7 @@ export const getAISummary = async (req, res) => {
 
 export async function generateSolutions(dispute, dispute_id, io) {
   try {
+    console.log(`[generateSolutions] START | dispute: ${dispute._id}`);
     const prompt = `You are a conflict resolution expert generating solution options.
 
 CONTEXT:
@@ -883,6 +891,7 @@ OUTPUT JSON:
   ]
 }`;
 
+    console.log(`[generateSolutions] Calling Gemini | dispute: ${dispute._id}`);
     const response = await callGemini(prompt);
     const result = cleanAIResponse(response);
 
@@ -890,9 +899,11 @@ OUTPUT JSON:
       throw new Error("Invalid solutions structure from AI");
     }
 
+    console.log(`[generateSolutions] Got ${result.solutions.length} solutions | dispute: ${dispute._id}`);
     dispute.solutions = result.solutions;
     dispute.status = "OPTIONS_SELECTION";
     await dispute.save();
+    console.log(`[generateSolutions] [SAVE] status → OPTIONS_SELECTION | dispute: ${dispute._id}`);
 
     if (io) {
       io.to(dispute_id).emit("solutions_ready", {
@@ -901,13 +912,18 @@ OUTPUT JSON:
         message: "Solution options generated. Please select your preferred options.",
         timestamp: new Date()
       });
+      console.log(`[EMIT] solutions_ready | to room: ${dispute_id} | count: ${dispute.solutions.length}`);
+    } else {
+      console.warn(`[generateSolutions] io is null — solutions_ready NOT emitted | dispute: ${dispute._id}`);
     }
+    console.log(`[generateSolutions] SUCCESS | dispute: ${dispute._id}`);
   } catch (error) {
-    console.error("generateSolutions failed:", error);
+    console.error(`[generateSolutions] FAILED | dispute: ${dispute._id}`, error);
     dispute.status = "SUMMARY_REVIEW";
     dispute.summary_approval.creator_approved = false;
     dispute.summary_approval.joiner_approved = false;
     await dispute.save();
+    console.log(`[generateSolutions] [SAVE] rolled back → SUMMARY_REVIEW | dispute: ${dispute._id}`);
     throw error;
   }
 }
@@ -1050,6 +1066,7 @@ export const selectSolutions = async (req, res) => {
 
 export async function generateSuggestedPlan(dispute, io) {
   try {
+    console.log(`[generateSuggestedPlan] START | dispute: ${dispute._id}`);
     const creatorSelectedSolutions = dispute.solutions.filter(s =>
       dispute.solution_selections.creator_selected.includes(s.id)
     );
@@ -1108,6 +1125,7 @@ OUTPUT JSON:
     dispute.suggested_plan_approval = { creator_approved: false, joiner_approved: false };
     dispute.status = "SUGGESTED_PLAN_REVIEW";
     await dispute.save();
+    console.log(`[generateSuggestedPlan] [SAVE] status → SUGGESTED_PLAN_REVIEW | dispute: ${dispute._id}`);
 
     if (io) {
       io.to(dispute._id.toString()).emit("suggested_plan_ready", {
@@ -1116,13 +1134,17 @@ OUTPUT JSON:
         message: "AI has suggested a resolution plan. Review and accept or start negotiation.",
         timestamp: new Date()
       });
-    console.log("Suggested plan generated for dispute:", dispute._id);
+      console.log(`[EMIT] suggested_plan_ready | to room: ${dispute._id} | title: ${dispute.suggested_plan.title}`);
+    } else {
+      console.warn(`[generateSuggestedPlan] io is null — suggested_plan_ready NOT emitted | dispute: ${dispute._id}`);
     }
+    console.log(`[generateSuggestedPlan] SUCCESS | dispute: ${dispute._id}`);
 
   } catch (error) {
-    console.error("generateSuggestedPlan failed:", error);
+    console.error(`[generateSuggestedPlan] FAILED | dispute: ${dispute._id}`, error);
     dispute.status = "OPTIONS_SELECTION";
     await dispute.save();
+    console.log(`[generateSuggestedPlan] [SAVE] rolled back → OPTIONS_SELECTION | dispute: ${dispute._id}`);
     throw error;
   }
 }
@@ -1478,6 +1500,7 @@ export const signalAgreement = async (req, res) => {
 
 export async function generateFinalPlan(dispute, dispute_id, io) {
   try {
+    console.log(`[generateFinalPlan] START | dispute: ${dispute._id}`);
     const creatorSelectedSolutions = dispute.solutions.filter(s =>
       dispute.solution_selections.creator_selected.includes(s.id)
     );
@@ -1542,6 +1565,7 @@ OUTPUT JSON:
     dispute.final_plan = result.final_plan;
     dispute.status = "FINAL_PLAN_REVIEW";
     await dispute.save();
+    console.log(`[generateFinalPlan] [SAVE] status → FINAL_PLAN_REVIEW | dispute: ${dispute._id}`);
 
     if (io) {
       io.to(dispute_id).emit("final_plan_ready", {
@@ -1550,13 +1574,16 @@ OUTPUT JSON:
         message: "Final resolution plan is ready. Please review and approve.",
         timestamp: new Date()
       });
+      console.log(`[EMIT] final_plan_ready | to room: ${dispute_id} | title: ${dispute.final_plan.title}`);
+    } else {
+      console.warn(`[generateFinalPlan] io is null — final_plan_ready NOT emitted | dispute: ${dispute._id}`);
     }
-
-    console.log("Final plan generated for dispute:", dispute._id);
+    console.log(`[generateFinalPlan] SUCCESS | dispute: ${dispute._id}`);
   } catch (error) {
-    console.error("generateFinalPlan failed:", error);
+    console.error(`[generateFinalPlan] FAILED | dispute: ${dispute._id}`, error);
     dispute.status = "NEGOTIATION";
     await dispute.save();
+    console.log(`[generateFinalPlan] [SAVE] rolled back → NEGOTIATION | dispute: ${dispute._id}`);
     throw error;
   }
 }
