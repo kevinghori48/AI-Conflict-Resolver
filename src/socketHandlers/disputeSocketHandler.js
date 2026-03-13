@@ -783,6 +783,8 @@ OUTPUT JSON:
     // ─── ACCEPT SUGGESTED PLAN ────────────────────────────────────────────────
     requireAuth("accept_suggested_plan", async ({ dispute_id }, callback) => {
       const roomId = getRoomDisputeId({ dispute_id });
+      console.log(`[LISTEN] accept_suggested_plan | user: ${socket.user?.email} | dispute: ${roomId}`);
+
       if (!roomId) {
         if (callback) callback({ success: false, message: "dispute_id is required" });
         return;
@@ -795,6 +797,7 @@ OUTPUT JSON:
       }
 
       if (dispute.status !== "SUGGESTED_PLAN_REVIEW") {
+        console.log(`[accept_suggested_plan] wrong status: ${dispute.status} | dispute: ${roomId}`);
         if (callback) callback({ success: false, message: "No suggested plan available for acceptance" });
         return;
       }
@@ -806,11 +809,15 @@ OUTPUT JSON:
         return;
       }
 
+      const role = isCreator ? "creator" : "joiner";
+
       if (isCreator && dispute.suggested_plan_approval?.creator_approved) {
+        console.log(`[accept_suggested_plan] already accepted | user: ${socket.user?.email} (${role}) | dispute: ${roomId}`);
         if (callback) callback({ success: false, message: "You have already accepted the plan" });
         return;
       }
       if (isJoiner && dispute.suggested_plan_approval?.joiner_approved) {
+        console.log(`[accept_suggested_plan] already accepted | user: ${socket.user?.email} (${role}) | dispute: ${roomId}`);
         if (callback) callback({ success: false, message: "You have already accepted the plan" });
         return;
       }
@@ -818,6 +825,7 @@ OUTPUT JSON:
       if (isCreator) dispute.suggested_plan_approval.creator_approved = true;
       else dispute.suggested_plan_approval.joiner_approved = true;
       await dispute.save();
+      console.log(`[accept_suggested_plan] [SAVE] ${role} approved | creator: ${dispute.suggested_plan_approval.creator_approved} joiner: ${dispute.suggested_plan_approval.joiner_approved} | dispute: ${roomId}`);
 
       if (dispute.suggested_plan_approval.creator_approved && dispute.suggested_plan_approval.joiner_approved) {
         dispute.status = "COMPLETED";
@@ -825,6 +833,7 @@ OUTPUT JSON:
         dispute.final_plan = dispute.suggested_plan;
         dispute.final_plan_approval = { creator_approved: true, joiner_approved: true };
         await dispute.save();
+        console.log(`[accept_suggested_plan] [SAVE] status → COMPLETED | dispute: ${roomId}`);
 
         io.to(roomId).emit("dispute_completed", {
           status: "COMPLETED",
@@ -844,7 +853,7 @@ OUTPUT JSON:
         message: "Acceptance recorded. Waiting for other party.",
         timestamp: new Date()
       });
-      console.log(`[EMIT] suggested_plan_approval_update | to room: ${roomId} | creator: ${dispute.suggested_plan_approval.creator_approved} joiner: ${dispute.suggested_plan_approval.joiner_approved}`);
+      console.log(`[EMIT] suggested_plan_approval_update | to room: ${roomId} | by: ${role} | creator: ${dispute.suggested_plan_approval.creator_approved} joiner: ${dispute.suggested_plan_approval.joiner_approved}`);
 
       if (callback) {
         callback({
@@ -859,6 +868,8 @@ OUTPUT JSON:
     // ─── REJECT SUGGESTED PLAN → START NEGOTIATION ───────────────────────────
     requireAuth("reject_suggested_plan", async ({ dispute_id, reason }, callback) => {
       const roomId = getRoomDisputeId({ dispute_id });
+      console.log(`[LISTEN] reject_suggested_plan | user: ${socket.user?.email} | dispute: ${roomId} | reason: ${reason || "none"}`);
+
       if (!roomId) {
         if (callback) callback({ success: false, message: "dispute_id is required" });
         return;
@@ -871,6 +882,7 @@ OUTPUT JSON:
       }
 
       if (dispute.status !== "SUGGESTED_PLAN_REVIEW") {
+        console.log(`[reject_suggested_plan] wrong status: ${dispute.status} | dispute: ${roomId}`);
         if (callback) callback({ success: false, message: "No suggested plan to reject" });
         return;
       }
@@ -882,9 +894,12 @@ OUTPUT JSON:
         return;
       }
 
+      const role = isCreator ? "creator" : "joiner";
+
       dispute.suggested_plan_approval = { creator_approved: false, joiner_approved: false };
       dispute.status = "NEGOTIATION";
       await dispute.save();
+      console.log(`[reject_suggested_plan] [SAVE] status → NEGOTIATION | rejected by: ${role} | dispute: ${roomId}`);
 
       io.to(roomId).emit("negotiation_started", {
         status: "NEGOTIATION",
@@ -1139,7 +1154,7 @@ OUTPUT JSON:
         return;
       }
 
-      // Normalize each comment so sender_name is always present, regardless of
+      // Normalise each comment so sender_name is always present, regardless of
       // whether sender_id was populated or is still a raw ObjectId.
       const comments = dispute.negotiation.comments.map(c => {
         const plain = typeof c.toObject === "function" ? c.toObject() : { ...c };
@@ -1360,6 +1375,8 @@ OUTPUT JSON:
     // EMIT   : callback            → caller only
     requireAuth("confirm_final_plan", async ({ dispute_id }, callback) => {
       const roomId = getRoomDisputeId({ dispute_id });
+      console.log(`[LISTEN] confirm_final_plan | user: ${socket.user?.email} | dispute: ${roomId}`);
+
       if (!roomId) {
         if (callback) callback({ success: false, message: "dispute_id is required" });
         return;
@@ -1371,6 +1388,7 @@ OUTPUT JSON:
         return;
       }
       if (dispute.status !== "FINAL_PLAN_REVIEW") {
+        console.log(`[confirm_final_plan] wrong status: ${dispute.status} | dispute: ${roomId}`);
         if (callback) callback({ success: false, message: "Final plan is not ready for confirmation" });
         return;
       }
@@ -1381,6 +1399,8 @@ OUTPUT JSON:
         if (callback) callback({ success: false, message: "Not a participant" });
         return;
       }
+
+      const confirmerRole = isCreator ? "creator" : "joiner";
 
       // Atomic flip — prevent double-confirm from same user
       const approvalField = isCreator
@@ -1394,11 +1414,13 @@ OUTPUT JSON:
       );
 
       if (!updated) {
+        console.log(`[confirm_final_plan] already confirmed or status changed | user: ${socket.user?.email} (${confirmerRole}) | dispute: ${roomId}`);
         if (callback) callback({ success: false, message: "You have already confirmed, or the plan is no longer under review" });
         return;
       }
 
-      const confirmerRole = isCreator ? "creator" : "joiner";
+      console.log(`[confirm_final_plan] [SAVE] ${confirmerRole} confirmed | creator: ${updated.final_plan_approval.creator_approved} joiner: ${updated.final_plan_approval.joiner_approved} | dispute: ${roomId}`);
+
       const bothConfirmed = updated.final_plan_approval.creator_approved && updated.final_plan_approval.joiner_approved;
 
       if (bothConfirmed) {
@@ -1409,10 +1431,12 @@ OUTPUT JSON:
           { new: true }
         );
         if (!claimed) {
-          // Other party already completed it
+          console.log(`[confirm_final_plan] status already flipped by other party | dispute: ${roomId}`);
           if (callback) callback({ success: true, status: "COMPLETED" });
           return;
         }
+
+        console.log(`[confirm_final_plan] [SAVE] status → COMPLETED | dispute: ${roomId}`);
 
         io.to(roomId).emit("plan_confirmed", {
           confirmed_by: confirmerRole,
@@ -1420,13 +1444,15 @@ OUTPUT JSON:
           joiner_approved: true,
           timestamp: new Date()
         });
+        console.log(`[EMIT] plan_confirmed | to room: ${roomId} | by: ${confirmerRole} | both confirmed`);
+
         io.to(roomId).emit("dispute_completed", {
           status: "COMPLETED",
           final_plan: claimed.final_plan,
           message: "Both parties confirmed the final plan. Dispute resolved successfully!",
           timestamp: new Date()
         });
-        console.log(`[EMIT] plan_confirmed + dispute_completed | to room: ${roomId} | both confirmed`);
+        console.log(`[EMIT] dispute_completed | to room: ${roomId} | via confirm_final_plan`);
 
         if (callback) callback({ success: true, status: "COMPLETED", final_plan: claimed.final_plan });
         return;
@@ -1440,7 +1466,7 @@ OUTPUT JSON:
         message: "Confirmation recorded. Waiting for other party.",
         timestamp: new Date()
       });
-      console.log(`[EMIT] plan_confirmed | to room: ${roomId} | by: ${confirmerRole} | creator: ${updated.final_plan_approval.creator_approved} joiner: ${updated.final_plan_approval.joiner_approved}`);
+      console.log(`[EMIT] plan_confirmed | to room: ${roomId} | by: ${confirmerRole} | creator: ${updated.final_plan_approval.creator_approved} joiner: ${updated.final_plan_approval.joiner_approved} | waiting for other party`);
 
       if (callback) {
         callback({
@@ -1461,6 +1487,8 @@ OUTPUT JSON:
     // EMIT   : callback            → caller only
     requireAuth("reject_final_plan", async ({ dispute_id, reason }, callback) => {
       const roomId = getRoomDisputeId({ dispute_id });
+      console.log(`[LISTEN] reject_final_plan | user: ${socket.user?.email} | dispute: ${roomId} | reason: ${reason || "none"}`);
+
       if (!roomId) {
         if (callback) callback({ success: false, message: "dispute_id is required" });
         return;
@@ -1472,6 +1500,7 @@ OUTPUT JSON:
         return;
       }
       if (dispute.status !== "FINAL_PLAN_REVIEW") {
+        console.log(`[reject_final_plan] wrong status: ${dispute.status} | dispute: ${roomId}`);
         if (callback) callback({ success: false, message: "No final plan to reject" });
         return;
       }
@@ -1491,12 +1520,15 @@ OUTPUT JSON:
       dispute.negotiation.joiner_ready  = false;
       dispute.status = "NEGOTIATION";
       await dispute.save();
+      console.log(`[reject_final_plan] [SAVE] status → NEGOTIATION | rejected by: ${rejecterRole} | dispute: ${roomId}`);
 
       io.to(roomId).emit("plan_rejected", {
         rejected_by: rejecterRole,
         reason: reason || "Party wants to negotiate further",
         timestamp: new Date()
       });
+      console.log(`[EMIT] plan_rejected | to room: ${roomId} | by: ${rejecterRole}`);
+
       io.to(roomId).emit("negotiation_started", {
         status: "NEGOTIATION",
         rejected_by: rejecterRole,
@@ -1508,7 +1540,7 @@ OUTPUT JSON:
         message: "Final plan rejected. Returning to negotiation.",
         timestamp: new Date()
       });
-      console.log(`[EMIT] plan_rejected + negotiation_started | to room: ${roomId} | by: ${rejecterRole}`);
+      console.log(`[EMIT] negotiation_started | to room: ${roomId} | triggered by: reject_final_plan | by: ${rejecterRole}`);
 
       if (callback) callback({ success: true, status: "NEGOTIATION", rejected_by: rejecterRole });
     });

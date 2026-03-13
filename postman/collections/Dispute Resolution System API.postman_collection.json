@@ -78,6 +78,18 @@
                 "packages": {},
                 "requests": {}
               }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "id": "4825724f-b278-48a3-a132-6f561d27fcd0",
+                "exec": [
+                  ""
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
+              }
             }
           ],
           "id": "8ffbdc75-1cda-4654-9db0-94c24d8d26d0",
@@ -94,7 +106,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"user2@example.com\",\n  \"firstName\": \"Jane\",\n  \"lastName\": \"Smith\"\n}"
+              "raw": "{\n  \"email\": \"user1@example.com\",\n  \"firstName\": \"Jane\",\n  \"lastName\": \"Smith\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/auth/login",
@@ -143,6 +155,7 @@
             {
               "listen": "test",
               "script": {
+                "id": "ceadfcbf-8178-4777-bbe4-9a5b49a36cb6",
                 "exec": [
                   "if (pm.response.code === 201) {",
                   "    var jsonData = pm.response.json();",
@@ -153,12 +166,35 @@
                   "}"
                 ],
                 "type": "text/javascript",
-                "id": "ceadfcbf-8178-4777-bbe4-9a5b49a36cb6"
+                "packages": {},
+                "requests": {}
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "id": "704adb15-95a5-4229-9775-69462066ce63",
+                "exec": [
+                  ""
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
               }
             }
           ],
           "id": "06984c1d-fe1d-4546-9222-2c0ff737b432",
           "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token_a}}",
+                  "type": "string"
+                }
+              ]
+            },
             "method": "POST",
             "header": [
               {
@@ -194,6 +230,16 @@
           "name": "Join Dispute",
           "id": "735daf61-5df0-4b75-b6f1-cc29ba1cff17",
           "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token_b}}",
+                  "type": "string"
+                }
+              ]
+            },
             "method": "POST",
             "header": [
               {
@@ -328,6 +374,16 @@
           "name": "End Conversation",
           "id": "24bf1688-1402-46c1-b2d4-0ca838a68ff6",
           "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token_b}}",
+                  "type": "string"
+                }
+              ]
+            },
             "method": "POST",
             "header": [
               {
@@ -870,42 +926,42 @@
   },
   "variable": [
     {
-      "id": "ea77f69c-4d5b-49b9-9284-11de823d610a",
+      "id": "e0e6dd13-c049-4f0e-b726-e651ccc18661",
       "key": "baseUrl",
       "value": "http://localhost:5001",
       "type": "string"
     },
     {
-      "id": "e75cd496-8824-414b-ba23-5bd6cd485c54",
+      "id": "d0acd80b-6375-4ca5-a2a4-21d35de8fba8",
       "key": "authToken",
       "value": "",
       "type": "string"
     },
     {
-      "id": "a08423c7-febf-4245-96aa-e3945b5a411d",
+      "id": "e7d8c547-b1dc-4e58-9b13-8f38e767b430",
       "key": "userId",
       "value": "",
       "type": "string"
     },
     {
-      "id": "79248ba1-2dd7-48ad-8482-6f271c6f3a5f",
+      "id": "8a62a25c-f1ab-4de4-a73b-6b04afc9c3a0",
       "key": "disputeId",
       "value": "",
       "type": "string"
     },
     {
-      "id": "d7db8b1c-37f6-436b-b0ff-48963bc2a34d",
+      "id": "34a579db-94be-40aa-b79f-24e01c8eb3bb",
       "key": "inviteCode",
       "value": "",
       "type": "string"
     },
     {
-      "id": "b8fd68a0-5fde-40ea-b6c2-c2ee8de37e5b",
+      "id": "43954604-91c4-44df-bb48-7769dfd3fa78",
       "key": "token_a",
       "value": ""
     },
     {
-      "id": "e2b3e770-8a5b-4e20-93bb-675c5ac30f00",
+      "id": "502bf4dd-2d39-4334-b6e3-1ef7680565d8",
       "key": "token_b",
       "value": ""
     }
