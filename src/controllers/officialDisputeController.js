@@ -999,24 +999,64 @@ export const selectSolutions = async (req, res) => {
     const creatorVotes = updated.solution_selections.creator_selected;
     const joinerVotes = updated.solution_selections.joiner_selected;
 
-    // NOTE: Generation trigger (generating_suggested_plan + generateSuggestedPlan) is
-    // handled exclusively by the socket handler (select_solutions event) which uses an
-    // atomic CAS guard to ensure only one trigger fires. This REST endpoint only saves
-    // the selection and returns — it never emits or triggers generation itself.
-    console.log(`[selectSolutions] selection saved | creator: ${creatorVotes.length > 0} | joiner: ${joinerVotes.length > 0} | dispute: ${dispute_id}`);
+    if (creatorVotes.length > 0 && joinerVotes.length > 0) {
+      dispute.status = "AI_SUMMARIZING";
+      await dispute.save();
 
-    const bothSelected = creatorVotes.length > 0 && joinerVotes.length > 0;
+      if (req.app.get('io')) {
+        req.app.get('io').to(dispute_id).emit("generating_suggested_plan", {
+          status: "AI_SUMMARIZING",
+          creator_selections: creatorVotes,
+          joiner_selections: joinerVotes,
+          message: "Both parties have selected. AI is generating a suggested resolution plan...",
+          timestamp: new Date()
+        });
+        console.log(`[EMIT] generating_suggested_plan | to room: ${dispute_id}`);
+      }
+
+      const disputeIdString = dispute._id.toString();
+      const ioInstance = req.app.get('io');
+      console.log(`[selectSolutions] ioInstance resolved: ${ioInstance ? "OK" : "NULL — check io middleware"}`);
+
+      setTimeout(async () => {
+        try {
+          const freshDispute = await OfficialDispute.findById(disputeIdString);
+          if (!freshDispute) return;
+          await generateSuggestedPlan(freshDispute, ioInstance);
+        } catch (error) {
+          console.error("Suggested plan generation failed:", error);
+          if (ioInstance) {
+            ioInstance.to(disputeIdString).emit("suggested_plan_failed", {
+              message: "Failed to generate suggested plan. Please try again.",
+              error: error.message
+            });
+          }
+        }
+      }, 1000);
+
+      return res.json({
+        success: true,
+        message: "Both parties have selected. Generating suggested plan...",
+        status: "AI_SUMMARIZING",
+        creator_selections: creatorVotes,
+        joiner_selections: joinerVotes
+      });
+    }
+
+    if (req.app.get('io')) {
+      req.app.get('io').to(dispute_id).emit("selection_update", {
+        message: "Selection recorded. Waiting for other party.",
+        has_creator_selected: creatorVotes.length > 0,
+        has_joiner_selected: joinerVotes.length > 0,
+        timestamp: new Date()
+      });
+    }
 
     res.json({
       success: true,
-      message: bothSelected
-        ? "Both parties have selected. Generating suggested plan..."
-        : "Selection recorded. Waiting for other party.",
-      status: bothSelected ? "AI_SUMMARIZING" : "OPTIONS_SELECTION",
+      message: "Selection recorded. Waiting for other party.",
       your_selections: selected_solution_ids,
-      creator_selections: creatorVotes,
-      joiner_selections: joinerVotes,
-      waiting_for_other: !bothSelected
+      waiting_for_other: true
     });
   } catch (err) {
     console.error("Select solutions error:", err);
