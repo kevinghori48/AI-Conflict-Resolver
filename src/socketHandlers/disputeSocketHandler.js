@@ -950,6 +950,7 @@ OUTPUT JSON:
       io.to(roomId).emit("new_negotiation_comment", {
         comment: {
           ...commentPlain,
+          sender_id: socket.userId,           // keep as ID for consistency
           sender_name: `${socket.user.firstName} ${socket.user.lastName}`
         },
         creator_ready: false,
@@ -986,20 +987,48 @@ OUTPUT JSON:
         return;
       }
 
-      if (isCreator) dispute.negotiation.creator_ready = true;
-      else dispute.negotiation.joiner_ready = true;
-      await dispute.save();
+      // Atomic update — flip ready flag only if it is still false, preventing
+      // two simultaneous socket events from both triggering generateFinalPlan.
+      const readyField = isCreator
+        ? "negotiation.creator_ready"
+        : "negotiation.joiner_ready";
 
-      if (dispute.negotiation.creator_ready && dispute.negotiation.joiner_ready) {
-        dispute.status = "AI_SUMMARIZING";
-        await dispute.save();
+      const updatedReady = await OfficialDispute.findOneAndUpdate(
+        { _id: roomId, status: "NEGOTIATION", [readyField]: false },
+        { $set: { [readyField]: true } },
+        { new: true }
+      );
 
+      if (!updatedReady) {
+        if (callback) callback({ success: false, message: "You have already signalled agreement, or the dispute is no longer in negotiation" });
+        return;
+      }
+
+      if (updatedReady.negotiation.creator_ready && updatedReady.negotiation.joiner_ready) {
+        // Atomically claim the right to trigger generation — only one request wins.
+        const claimed = await OfficialDispute.findOneAndUpdate(
+          { _id: roomId, status: "NEGOTIATION" },
+          { $set: { status: "AI_SUMMARIZING" } },
+          { new: true }
+        );
+
+        if (!claimed) {
+          if (callback) callback({ success: true, status: "AI_SUMMARIZING" });
+          return;
+        }
+
+        io.to(roomId).emit("both_agreed", {
+          creator_ready: true,
+          joiner_ready: true,
+          message: "Both parties have agreed. Generating final resolution plan...",
+          timestamp: new Date()
+        });
         io.to(roomId).emit("generating_final_plan", {
           status: "AI_SUMMARIZING",
           message: "Both parties agreed. AI is constructing the final resolution plan...",
           timestamp: new Date()
         });
-        console.log(`[EMIT] generating_final_plan | to room: ${roomId} | both parties agreed`);
+        console.log(`[EMIT] both_agreed + generating_final_plan | to room: ${roomId} | both parties agreed`);
 
         const disputeIdString = roomId;
         setTimeout(async () => {
@@ -1028,19 +1057,19 @@ OUTPUT JSON:
       }
 
       io.to(roomId).emit("agreement_update", {
-        creator_ready: dispute.negotiation.creator_ready,
-        joiner_ready: dispute.negotiation.joiner_ready,
+        creator_ready: updatedReady.negotiation.creator_ready,
+        joiner_ready: updatedReady.negotiation.joiner_ready,
         message: "Agreement signal recorded. Waiting for other party.",
         timestamp: new Date()
       });
-      console.log(`[EMIT] agreement_update | to room: ${roomId} | creator: ${dispute.negotiation.creator_ready} joiner: ${dispute.negotiation.joiner_ready}`);
+      console.log(`[EMIT] agreement_update | to room: ${roomId} | creator: ${updatedReady.negotiation.creator_ready} joiner: ${updatedReady.negotiation.joiner_ready}`);
 
       if (callback) {
         callback({
           success: true,
-          status: dispute.status,
-          creator_ready: dispute.negotiation.creator_ready,
-          joiner_ready: dispute.negotiation.joiner_ready
+          status: updatedReady.status,
+          creator_ready: updatedReady.negotiation.creator_ready,
+          joiner_ready: updatedReady.negotiation.joiner_ready
         });
       }
     });
@@ -1110,15 +1139,26 @@ OUTPUT JSON:
         return;
       }
 
-      console.log(`[EMIT] callback get_negotiation_comments | to: ${socket.user.email} | count: ${dispute.negotiation.comments.length}`);
+      // Normalise each comment so sender_name is always present, regardless of
+      // whether sender_id was populated or is still a raw ObjectId.
+      const comments = dispute.negotiation.comments.map(c => {
+        const plain = typeof c.toObject === "function" ? c.toObject() : { ...c };
+        const sender = plain.sender_id;
+        const sender_name = sender && sender.firstName
+          ? `${sender.firstName} ${sender.lastName}`
+          : null;
+        return { ...plain, sender_name };
+      });
+
+      console.log(`[EMIT] callback get_negotiation_comments | to: ${socket.user.email} | count: ${comments.length}`);
       if (callback) {
         callback({
           success: true,
           status: dispute.status,
-          comments: dispute.negotiation.comments,
+          comments,
           creator_ready: dispute.negotiation.creator_ready,
           joiner_ready: dispute.negotiation.joiner_ready,
-          count: dispute.negotiation.comments.length
+          count: comments.length
         });
       }
     });

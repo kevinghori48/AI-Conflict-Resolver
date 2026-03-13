@@ -1430,17 +1430,53 @@ export const signalAgreement = async (req, res) => {
       return res.status(403).json({ message: "You are not a participant of this dispute" });
     }
 
-    if (isCreator) dispute.negotiation.creator_ready = true;
-    else dispute.negotiation.joiner_ready = true;
+    // Atomic update — flip this user's ready flag only if it is still false.
+    // This prevents two simultaneous HTTP calls from both reading ready=false,
+    // both passing the in-memory guard, and both calling generateFinalPlan.
+    const readyField = isCreator
+      ? "negotiation.creator_ready"
+      : "negotiation.joiner_ready";
 
-    await dispute.save();
+    const updatedReady = await OfficialDispute.findOneAndUpdate(
+      { _id: dispute_id, status: "NEGOTIATION", [readyField]: false },
+      { $set: { [readyField]: true } },
+      { new: true }
+    );
 
-    if (dispute.negotiation.creator_ready && dispute.negotiation.joiner_ready) {
-      dispute.status = "AI_SUMMARIZING";
-      await dispute.save();
+    if (!updatedReady) {
+      return res.status(400).json({
+        message: "You have already signalled agreement, or the dispute is no longer in negotiation"
+      });
+    }
 
-      if (req.app.get('io')) {
-        req.app.get('io').to(dispute_id).emit("generating_final_plan", {
+    if (updatedReady.negotiation.creator_ready && updatedReady.negotiation.joiner_ready) {
+      // Atomically claim the right to trigger final plan generation — only one request wins.
+      const claimed = await OfficialDispute.findOneAndUpdate(
+        { _id: dispute_id, status: "NEGOTIATION" },
+        { $set: { status: "AI_SUMMARIZING" } },
+        { new: true }
+      );
+
+      if (!claimed) {
+        // Another concurrent request already flipped status — generation already queued.
+        return res.json({
+          success: true,
+          message: "Both parties agreed. Generating final resolution plan...",
+          status: "AI_SUMMARIZING"
+        });
+      }
+
+      const ioInstance = req.app.get('io');
+      console.log(`[signalAgreement] ioInstance resolved: ${ioInstance ? "OK" : "NULL — check io middleware"}`);
+
+      if (ioInstance) {
+        ioInstance.to(dispute_id).emit("both_agreed", {
+          creator_ready: true,
+          joiner_ready: true,
+          message: "Both parties have agreed. Generating final resolution plan...",
+          timestamp: new Date()
+        });
+        ioInstance.to(dispute_id).emit("generating_final_plan", {
           status: "AI_SUMMARIZING",
           message: "Both parties agreed. AI is constructing the final resolution plan...",
           timestamp: new Date()
@@ -1448,8 +1484,6 @@ export const signalAgreement = async (req, res) => {
       }
 
       const disputeIdString = dispute_id;
-      const ioInstance = req.app.get('io');
-      console.log(`[signalAgreement] ioInstance resolved: ${ioInstance ? "OK" : "NULL — check io middleware"}`);
 
       setTimeout(async () => {
         try {
@@ -1480,8 +1514,8 @@ export const signalAgreement = async (req, res) => {
 
     if (req.app.get('io')) {
       req.app.get('io').to(dispute_id).emit("agreement_update", {
-        creator_ready: dispute.negotiation.creator_ready,
-        joiner_ready: dispute.negotiation.joiner_ready,
+        creator_ready: updatedReady.negotiation.creator_ready,
+        joiner_ready: updatedReady.negotiation.joiner_ready,
         message: "Agreement signal recorded. Waiting for other party.",
         timestamp: new Date()
       });
@@ -1490,8 +1524,8 @@ export const signalAgreement = async (req, res) => {
     res.json({
       success: true,
       message: "Agreement signal recorded. Waiting for other party.",
-      creator_ready: dispute.negotiation.creator_ready,
-      joiner_ready: dispute.negotiation.joiner_ready
+      creator_ready: updatedReady.negotiation.creator_ready,
+      joiner_ready: updatedReady.negotiation.joiner_ready
     });
   } catch (err) {
     console.error("Signal agreement error:", err);
