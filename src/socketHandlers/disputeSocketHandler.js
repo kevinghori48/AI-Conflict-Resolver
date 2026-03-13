@@ -1139,7 +1139,7 @@ OUTPUT JSON:
         return;
       }
 
-      // Normalise each comment so sender_name is always present, regardless of
+      // Normalize each comment so sender_name is always present, regardless of
       // whether sender_id was populated or is still a raw ObjectId.
       const comments = dispute.negotiation.comments.map(c => {
         const plain = typeof c.toObject === "function" ? c.toObject() : { ...c };
@@ -1346,6 +1346,472 @@ OUTPUT JSON:
       }
 
       if (callback) callback({ success: true, status: dispute.status, message: "Issue reported. Thank you for your feedback." });
+    });
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // SCREEN 9 — FINAL PLAN: CONFIRM & REJECT
+    // ════════════════════════════════════════════════════════════════════════════
+
+    // ─── CONFIRM FINAL PLAN ───────────────────────────────────────────────────
+    // Alias for approve_final_plan with richer per-user acknowledgment events.
+    // LISTEN : confirm_final_plan  { dispute_id }
+    // EMIT   : plan_confirmed      → room  (both parties, with approval state)
+    // EMIT   : dispute_completed   → room  (when both confirmed)
+    // EMIT   : callback            → caller only
+    requireAuth("confirm_final_plan", async ({ dispute_id }, callback) => {
+      const roomId = getRoomDisputeId({ dispute_id });
+      if (!roomId) {
+        if (callback) callback({ success: false, message: "dispute_id is required" });
+        return;
+      }
+
+      const dispute = await OfficialDispute.findById(roomId);
+      if (!dispute) {
+        if (callback) callback({ success: false, message: "Dispute not found" });
+        return;
+      }
+      if (dispute.status !== "FINAL_PLAN_REVIEW") {
+        if (callback) callback({ success: false, message: "Final plan is not ready for confirmation" });
+        return;
+      }
+
+      const isCreator = dispute.creator_id.toString() === socket.userId;
+      const isJoiner  = dispute.joiner_id?.toString()  === socket.userId;
+      if (!isCreator && !isJoiner) {
+        if (callback) callback({ success: false, message: "Not a participant" });
+        return;
+      }
+
+      // Atomic flip — prevent double-confirm from same user
+      const approvalField = isCreator
+        ? "final_plan_approval.creator_approved"
+        : "final_plan_approval.joiner_approved";
+
+      const updated = await OfficialDispute.findOneAndUpdate(
+        { _id: roomId, status: "FINAL_PLAN_REVIEW", [approvalField]: false },
+        { $set: { [approvalField]: true } },
+        { new: true }
+      );
+
+      if (!updated) {
+        if (callback) callback({ success: false, message: "You have already confirmed, or the plan is no longer under review" });
+        return;
+      }
+
+      const confirmerRole = isCreator ? "creator" : "joiner";
+      const bothConfirmed = updated.final_plan_approval.creator_approved && updated.final_plan_approval.joiner_approved;
+
+      if (bothConfirmed) {
+        // Atomically claim COMPLETED transition
+        const claimed = await OfficialDispute.findOneAndUpdate(
+          { _id: roomId, status: "FINAL_PLAN_REVIEW" },
+          { $set: { status: "COMPLETED", completed_at: new Date() } },
+          { new: true }
+        );
+        if (!claimed) {
+          // Other party already completed it
+          if (callback) callback({ success: true, status: "COMPLETED" });
+          return;
+        }
+
+        io.to(roomId).emit("plan_confirmed", {
+          confirmed_by: confirmerRole,
+          creator_approved: true,
+          joiner_approved: true,
+          timestamp: new Date()
+        });
+        io.to(roomId).emit("dispute_completed", {
+          status: "COMPLETED",
+          final_plan: claimed.final_plan,
+          message: "Both parties confirmed the final plan. Dispute resolved successfully!",
+          timestamp: new Date()
+        });
+        console.log(`[EMIT] plan_confirmed + dispute_completed | to room: ${roomId} | both confirmed`);
+
+        if (callback) callback({ success: true, status: "COMPLETED", final_plan: claimed.final_plan });
+        return;
+      }
+
+      // Only one party confirmed so far — notify the room
+      io.to(roomId).emit("plan_confirmed", {
+        confirmed_by: confirmerRole,
+        creator_approved: updated.final_plan_approval.creator_approved,
+        joiner_approved: updated.final_plan_approval.joiner_approved,
+        message: "Confirmation recorded. Waiting for other party.",
+        timestamp: new Date()
+      });
+      console.log(`[EMIT] plan_confirmed | to room: ${roomId} | by: ${confirmerRole} | creator: ${updated.final_plan_approval.creator_approved} joiner: ${updated.final_plan_approval.joiner_approved}`);
+
+      if (callback) {
+        callback({
+          success: true,
+          status: updated.status,
+          confirmed_by: confirmerRole,
+          creator_approved: updated.final_plan_approval.creator_approved,
+          joiner_approved: updated.final_plan_approval.joiner_approved
+        });
+      }
+    });
+
+    // ─── REJECT FINAL PLAN → BACK TO NEGOTIATION ─────────────────────────────
+    // Either party can reject the AI final plan and restart negotiation.
+    // LISTEN : reject_final_plan   { dispute_id, reason? }
+    // EMIT   : plan_rejected       → room  (with who rejected + reason)
+    // EMIT   : negotiation_started → room  (status flipped to NEGOTIATION)
+    // EMIT   : callback            → caller only
+    requireAuth("reject_final_plan", async ({ dispute_id, reason }, callback) => {
+      const roomId = getRoomDisputeId({ dispute_id });
+      if (!roomId) {
+        if (callback) callback({ success: false, message: "dispute_id is required" });
+        return;
+      }
+
+      const dispute = await OfficialDispute.findById(roomId);
+      if (!dispute) {
+        if (callback) callback({ success: false, message: "Dispute not found" });
+        return;
+      }
+      if (dispute.status !== "FINAL_PLAN_REVIEW") {
+        if (callback) callback({ success: false, message: "No final plan to reject" });
+        return;
+      }
+
+      const isCreator = dispute.creator_id.toString() === socket.userId;
+      const isJoiner  = dispute.joiner_id?.toString()  === socket.userId;
+      if (!isCreator && !isJoiner) {
+        if (callback) callback({ success: false, message: "Not a participant" });
+        return;
+      }
+
+      const rejecterRole = isCreator ? "creator" : "joiner";
+
+      // Reset approvals and drop back to NEGOTIATION
+      dispute.final_plan_approval = { creator_approved: false, joiner_approved: false };
+      dispute.negotiation.creator_ready = false;
+      dispute.negotiation.joiner_ready  = false;
+      dispute.status = "NEGOTIATION";
+      await dispute.save();
+
+      io.to(roomId).emit("plan_rejected", {
+        rejected_by: rejecterRole,
+        reason: reason || "Party wants to negotiate further",
+        timestamp: new Date()
+      });
+      io.to(roomId).emit("negotiation_started", {
+        status: "NEGOTIATION",
+        rejected_by: rejecterRole,
+        reason: reason || "Party wants to negotiate further",
+        suggested_plan: dispute.suggested_plan,
+        final_plan: dispute.final_plan,
+        creator_selections: dispute.solution_selections.creator_selected,
+        joiner_selections:  dispute.solution_selections.joiner_selected,
+        message: "Final plan rejected. Returning to negotiation.",
+        timestamp: new Date()
+      });
+      console.log(`[EMIT] plan_rejected + negotiation_started | to room: ${roomId} | by: ${rejecterRole}`);
+
+      if (callback) callback({ success: true, status: "NEGOTIATION", rejected_by: rejecterRole });
+    });
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // NEGOTIATION COMMENT CHAT — send / receive / typing
+    // ════════════════════════════════════════════════════════════════════════════
+
+    // ─── SEND NEGOTIATION COMMENT (chat-style) ────────────────────────────────
+    // Cleaner alias for post_negotiation_comment that:
+    //   • emits back to the SENDER too (is_self: true) for instant local display
+    //   • emits to the OTHER party    (is_self: false) as an incoming message
+    // LISTEN : send_negotiation_comment  { dispute_id, text }
+    // EMIT   : negotiation_comment       → sender socket only  (is_self: true)
+    // EMIT   : negotiation_comment       → other socket(s)     (is_self: false)
+    // EMIT   : callback                  → caller only
+    requireAuth("send_negotiation_comment", async ({ dispute_id, text }, callback) => {
+      const roomId = getRoomDisputeId({ dispute_id });
+      if (!roomId) {
+        if (callback) callback({ success: false, message: "dispute_id is required" });
+        return;
+      }
+      if (!text || text.trim() === "") {
+        if (callback) callback({ success: false, message: "Message text is required" });
+        return;
+      }
+
+      const dispute = await OfficialDispute.findById(roomId);
+      if (!dispute) {
+        if (callback) callback({ success: false, message: "Dispute not found" });
+        return;
+      }
+      if (dispute.status !== "NEGOTIATION") {
+        if (callback) callback({ success: false, message: "Dispute is not in negotiation phase" });
+        return;
+      }
+
+      const isCreator = dispute.creator_id.toString() === socket.userId;
+      const isJoiner  = dispute.joiner_id?.toString()  === socket.userId;
+      if (!isCreator && !isJoiner) {
+        if (callback) callback({ success: false, message: "Not a participant" });
+        return;
+      }
+
+      const senderRole = isCreator ? "creator" : "joiner";
+
+      dispute.negotiation.comments.push({
+        sender_id:   socket.userId,
+        sender_role: senderRole,
+        text:        text.trim(),
+        timestamp:   new Date()
+      });
+      // Posting a new message resets both ready flags — both must re-agree
+      dispute.negotiation.creator_ready = false;
+      dispute.negotiation.joiner_ready  = false;
+      await dispute.save();
+
+      const saved = dispute.negotiation.comments[dispute.negotiation.comments.length - 1];
+      const commentPayload = {
+        _id:         saved._id,
+        sender_id:   socket.userId,
+        sender_role: senderRole,
+        sender_name: `${socket.user.firstName} ${socket.user.lastName}`,
+        text:        saved.text,
+        timestamp:   saved.timestamp,
+        creator_ready: false,
+        joiner_ready:  false
+      };
+
+      // Confirm back to sender
+      socket.emit("negotiation_comment", { ...commentPayload, is_self: true });
+      // Push to other party in the room
+      socket.to(roomId).emit("negotiation_comment", { ...commentPayload, is_self: false });
+      console.log(`[EMIT] negotiation_comment | room: ${roomId} | sender: ${socket.user.email} (${senderRole})`);
+
+      if (callback) callback({ success: true, comment: commentPayload });
+    });
+
+    // ─── NEGOTIATION TYPING INDICATORS ────────────────────────────────────────
+    // LISTEN : negotiation_typing       { dispute_id }
+    // EMIT   : negotiation_user_typing  → other party only
+    requireAuth("negotiation_typing", ({ dispute_id }) => {
+      const roomId = getRoomDisputeId({ dispute_id });
+      if (!roomId) return;
+      socket.to(roomId).emit("negotiation_user_typing", {
+        user_id:   socket.userId,
+        user_role: socket.userRole,
+        user_name: `${socket.user.firstName} ${socket.user.lastName}`,
+        timestamp: new Date()
+      });
+      console.log(`[EMIT] negotiation_user_typing | room: ${roomId} | user: ${socket.user.email}`);
+    });
+
+    // LISTEN : negotiation_stop_typing       { dispute_id }
+    // EMIT   : negotiation_user_stop_typing  → other party only
+    requireAuth("negotiation_stop_typing", ({ dispute_id }) => {
+      const roomId = getRoomDisputeId({ dispute_id });
+      if (!roomId) return;
+      socket.to(roomId).emit("negotiation_user_stop_typing", {
+        user_id:   socket.userId,
+        user_role: socket.userRole,
+        timestamp: new Date()
+      });
+      console.log(`[EMIT] negotiation_user_stop_typing | room: ${roomId} | user: ${socket.user.email}`);
+    });
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // NEGOTIATION AGREEMENT — per-user acknowledgment events
+    // ════════════════════════════════════════════════════════════════════════════
+
+    // ─── AGREE TO NEGOTIATE (per-user targeted events) ────────────────────────
+    // signal_agreement already handles the full atomic flow but only emits to the
+    // room as a whole.  agree_negotiation adds:
+    //   • you_agreed          → sender socket only (immediate UI feedback)
+    //   • other_party_agreed  → other socket only  (show "they clicked agree")
+    //   • both_agreed         → room               (when both are ready)
+    //   • generating_final_plan → room             (trigger spinner on both sides)
+    // LISTEN : agree_negotiation  { dispute_id }
+    // EMIT   : you_agreed               → caller socket
+    // EMIT   : other_party_agreed       → other party socket
+    // EMIT   : both_agreed              → room (both ready)
+    // EMIT   : generating_final_plan    → room (both ready)
+    // EMIT   : callback                 → caller only
+    requireAuth("agree_negotiation", async ({ dispute_id }, callback) => {
+      const roomId = getRoomDisputeId({ dispute_id });
+      if (!roomId) {
+        if (callback) callback({ success: false, message: "dispute_id is required" });
+        return;
+      }
+
+      const dispute = await OfficialDispute.findById(roomId);
+      if (!dispute) {
+        if (callback) callback({ success: false, message: "Dispute not found" });
+        return;
+      }
+      if (dispute.status !== "NEGOTIATION") {
+        if (callback) callback({ success: false, message: "Dispute is not in negotiation phase" });
+        return;
+      }
+
+      const isCreator = dispute.creator_id.toString() === socket.userId;
+      const isJoiner  = dispute.joiner_id?.toString()  === socket.userId;
+      if (!isCreator && !isJoiner) {
+        if (callback) callback({ success: false, message: "Not a participant" });
+        return;
+      }
+
+      const readyField = isCreator
+        ? "negotiation.creator_ready"
+        : "negotiation.joiner_ready";
+
+      // Atomic flip — only succeeds if this user hasn't agreed yet
+      const updatedReady = await OfficialDispute.findOneAndUpdate(
+        { _id: roomId, status: "NEGOTIATION", [readyField]: false },
+        { $set: { [readyField]: true } },
+        { new: true }
+      );
+
+      if (!updatedReady) {
+        if (callback) callback({ success: false, message: "You have already agreed, or the dispute is no longer in negotiation" });
+        return;
+      }
+
+      const agreerRole = isCreator ? "creator" : "joiner";
+
+      // Immediate ack to the person who just agreed
+      socket.emit("you_agreed", {
+        creator_ready: updatedReady.negotiation.creator_ready,
+        joiner_ready:  updatedReady.negotiation.joiner_ready,
+        message: "Your agreement has been recorded.",
+        timestamp: new Date()
+      });
+      console.log(`[EMIT] you_agreed | to: ${socket.user.email} (${agreerRole})`);
+
+      if (updatedReady.negotiation.creator_ready && updatedReady.negotiation.joiner_ready) {
+        // Atomically claim generation — only one event loop wins
+        const claimed = await OfficialDispute.findOneAndUpdate(
+          { _id: roomId, status: "NEGOTIATION" },
+          { $set: { status: "AI_SUMMARIZING" } },
+          { new: true }
+        );
+
+        if (!claimed) {
+          if (callback) callback({ success: true, status: "AI_SUMMARIZING" });
+          return;
+        }
+
+        io.to(roomId).emit("both_agreed", {
+          creator_ready: true,
+          joiner_ready:  true,
+          message: "Both parties have agreed. Generating final resolution plan...",
+          timestamp: new Date()
+        });
+        io.to(roomId).emit("generating_final_plan", {
+          status: "AI_SUMMARIZING",
+          message: "AI is constructing the final resolution plan...",
+          timestamp: new Date()
+        });
+        console.log(`[EMIT] both_agreed + generating_final_plan | room: ${roomId} | triggered by: ${agreerRole}`);
+
+        const disputeIdString = roomId;
+        setTimeout(async () => {
+          try {
+            const freshDispute = await OfficialDispute.findById(disputeIdString);
+            if (!freshDispute) return;
+            await generateFinalPlan(freshDispute, disputeIdString, io);
+          } catch (error) {
+            console.error(`[ERROR] generateFinalPlan failed | dispute: ${disputeIdString}`, error);
+            try {
+              const rollback = await OfficialDispute.findById(disputeIdString);
+              if (rollback && rollback.status === "AI_SUMMARIZING") {
+                rollback.status = "NEGOTIATION";
+                rollback.negotiation.creator_ready = false;
+                rollback.negotiation.joiner_ready  = false;
+                await rollback.save();
+              }
+            } catch (rbErr) { console.error("Rollback failed:", rbErr); }
+            io.to(disputeIdString).emit("final_plan_failed", {
+              message: "Failed to generate final plan. Please try again.",
+              error: error.message
+            });
+            console.log(`[EMIT] final_plan_failed | room: ${disputeIdString}`);
+          }
+        }, 1000);
+
+        if (callback) callback({ success: true, status: "AI_SUMMARIZING" });
+        return;
+      }
+
+      // Only this user has agreed — notify the other party
+      socket.to(roomId).emit("other_party_agreed", {
+        agreed_by:     agreerRole,
+        creator_ready: updatedReady.negotiation.creator_ready,
+        joiner_ready:  updatedReady.negotiation.joiner_ready,
+        message: "Other party has agreed. Waiting for you to agree.",
+        timestamp: new Date()
+      });
+      console.log(`[EMIT] other_party_agreed | room: ${roomId} | agreed by: ${agreerRole}`);
+
+      if (callback) {
+        callback({
+          success: true,
+          status: updatedReady.status,
+          creator_ready: updatedReady.negotiation.creator_ready,
+          joiner_ready:  updatedReady.negotiation.joiner_ready
+        });
+      }
+    });
+
+    // ─── REVOKE AGREEMENT (undo agree before other party agrees) ─────────────
+    // Lets a user take back their agree signal while the other hasn't agreed yet.
+    // LISTEN : revoke_agreement   { dispute_id }
+    // EMIT   : agreement_revoked  → room
+    // EMIT   : callback           → caller
+    requireAuth("revoke_agreement", async ({ dispute_id }, callback) => {
+      const roomId = getRoomDisputeId({ dispute_id });
+      if (!roomId) {
+        if (callback) callback({ success: false, message: "dispute_id is required" });
+        return;
+      }
+
+      const dispute = await OfficialDispute.findById(roomId);
+      if (!dispute) {
+        if (callback) callback({ success: false, message: "Dispute not found" });
+        return;
+      }
+      if (dispute.status !== "NEGOTIATION") {
+        if (callback) callback({ success: false, message: "Cannot revoke — dispute is no longer in negotiation" });
+        return;
+      }
+
+      const isCreator = dispute.creator_id.toString() === socket.userId;
+      const isJoiner  = dispute.joiner_id?.toString()  === socket.userId;
+      if (!isCreator && !isJoiner) {
+        if (callback) callback({ success: false, message: "Not a participant" });
+        return;
+      }
+
+      // Block revoke if the other party has also agreed — too late to undo
+      const otherAlsoAgreed = isCreator
+        ? dispute.negotiation.joiner_ready
+        : dispute.negotiation.creator_ready;
+
+      if (otherAlsoAgreed) {
+        if (callback) callback({ success: false, message: "Cannot revoke — other party has already agreed" });
+        return;
+      }
+
+      const revokerRole = isCreator ? "creator" : "joiner";
+      const readyField  = isCreator ? "negotiation.creator_ready" : "negotiation.joiner_ready";
+
+      await OfficialDispute.findByIdAndUpdate(roomId, { $set: { [readyField]: false } });
+
+      io.to(roomId).emit("agreement_revoked", {
+        revoked_by: revokerRole,
+        creator_ready: isCreator ? false : dispute.negotiation.creator_ready,
+        joiner_ready:  isJoiner  ? false : dispute.negotiation.joiner_ready,
+        message: "Agreement revoked.",
+        timestamp: new Date()
+      });
+      console.log(`[EMIT] agreement_revoked | room: ${roomId} | by: ${revokerRole}`);
+
+      if (callback) callback({ success: true, status: "NEGOTIATION", revoked_by: revokerRole });
     });
 
     // ─── TYPING INDICATORS ────────────────────────────────────────────────────
