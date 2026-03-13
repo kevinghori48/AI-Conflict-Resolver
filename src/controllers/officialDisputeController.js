@@ -1549,6 +1549,20 @@ export async function generateFinalPlan(dispute, dispute_id, io) {
       .map(c => `${c.sender_role === "creator" ? "Person A" : "Person B"}: ${c.text}`)
       .join("\n");
 
+    // Build a section for the previously rejected suggested plan, if one exists
+    const rejectedPlanSection = dispute.suggested_plan && dispute.suggested_plan.title
+      ? `PREVIOUSLY REJECTED PLAN (do NOT reproduce this — use it only to understand what was already tried and rejected):
+Title: ${dispute.suggested_plan.title}
+Summary: ${dispute.suggested_plan.summary}
+Action Steps:
+${(dispute.suggested_plan.action_steps || []).map(s => `  ${s.step}. [${s.responsible}] ${s.action} (${s.timeframe})`).join("\n")}
+Commitments:
+  Person A: ${(dispute.suggested_plan.commitments?.creator || []).join("; ")}
+  Person B: ${(dispute.suggested_plan.commitments?.joiner || []).join("; ")}
+
+The parties reviewed this plan and rejected it. The negotiation comments below explain what they want changed. Your new plan MUST meaningfully differ from the above based on that feedback.`
+      : "";
+
     const prompt = `You are a professional conflict resolution expert constructing a final binding resolution plan.
 
 CONTEXT:
@@ -1566,10 +1580,12 @@ ${creatorSelectedSolutions.map(s => `- Option ${s.id}: ${s.title} — ${s.descri
 PERSON B (Joiner) preferred these solutions:
 ${joinerSelectedSolutions.map(s => `- Option ${s.id}: ${s.title} — ${s.description}`).join("\n")}
 
-NEGOTIATION DISCUSSION:
+${rejectedPlanSection}
+
+NEGOTIATION DISCUSSION (what the parties want changed):
 ${negotiationThread || "No additional comments were made — both parties agreed directly."}
 
-TASK: Based on everything above, construct a clear, fair, and actionable final resolution plan that both parties have agreed to.
+TASK: Based on everything above — especially the negotiation feedback and what was already rejected — construct a revised, fair, and actionable final resolution plan that addresses the parties' concerns.
 
 OUTPUT JSON:
 {
