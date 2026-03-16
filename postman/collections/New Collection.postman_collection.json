@@ -1,0 +1,278 @@
+{
+  "info": {
+    "_postman_id": "fff04049-aff1-4f75-8148-afcc2c59f617",
+    "name": "Major Dispute",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Login User 1",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "d2a2ea1b-6508-4e24-8ac2-9e39d3a9ec06",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.collectionVariables.set('token_a', jsonData.token);",
+                  "    pm.collectionVariables.set('userId1', jsonData.user._id);",
+                  "    console.log('Token saved:', jsonData.token);",
+                  "    console.log('User ID saved:', jsonData.user._id);",
+                  "}"
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "id": "6e99cf44-5f88-40de-b07c-866185ec5113",
+                "exec": [
+                  ""
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ],
+          "id": "cc202223-ea11-4f5e-8f5e-1bb211fe875b",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user2@example.com\",\n  \"firstName\": \"Alice\",\n  \"lastName\": \"Smith\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Login as second user to test joining dispute"
+          },
+          "response": []
+        },
+        {
+          "name": "Login User 2",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "755b7922-db56-495c-b091-04d2a31b6e72",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.collectionVariables.set('token_b', jsonData.token);",
+                  "    pm.collectionVariables.set('userId2', jsonData.user._id);",
+                  "    console.log('Token saved:', jsonData.token);",
+                  "    console.log('User ID saved:', jsonData.user._id);",
+                  "}"
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "id": "4825724f-b278-48a3-a132-6f561d27fcd0",
+                "exec": [
+                  ""
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ],
+          "id": "f5232020-983c-483b-932c-96e0ca861e57",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user1@example.com\",\n  \"firstName\": \"Bob\",\n  \"lastName\": \"Jones\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Login as second user to test joining dispute"
+          },
+          "response": []
+        }
+      ],
+      "id": "b89aec04-c5ac-4d1a-8344-c28e4f106b46"
+    },
+    {
+      "name": "Report",
+      "item": [
+        {
+          "name": "New Request",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "id": "30c5a3bd-4627-4ec8-9570-1c736d1e31a4",
+                "exec": [
+                  ""
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "id": "8e156aae-801a-4cb5-8023-460242fe9ae0",
+                "exec": [
+                  "if (pm.response.code === 200) {\r",
+                  "    var jsonData = pm.response.json();\r",
+                  "    pm.collectionVariables.set('report_id', jsonData.report._id);\r",
+                  "    console.log('Report saved:', jsonData.report._id);\r",
+                  "}"
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ],
+          "id": "055abf3e-04a0-4ca2-9a22-332e8f64dc06",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token_a}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "audio",
+                  "type": "file",
+                  "uuid": "3aadde1f-b51d-4083-80c2-d8d5ecf0cc2d",
+                  "src": [
+                    "/D:/Anushi/Downloads/ttsmaker-file-2025-12-12-12-43-38.mp3"
+                  ]
+                },
+                {
+                  "key": "conversation_type",
+                  "value": "Relationship",
+                  "type": "text",
+                  "uuid": "c6c29ec5-4b01-4d42-bf14-090d0b0097c1"
+                },
+                {
+                  "key": "objective",
+                  "value": "Resolve the argument",
+                  "type": "text",
+                  "uuid": "280323cb-c171-44e7-a2fc-fd3e6ab1680e"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/report/generate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "report",
+                "generate"
+              ]
+            }
+          },
+          "response": []
+        }
+      ],
+      "id": "9437c7aa-25b4-4662-8e95-5cf915a9e1b5"
+    },
+    {
+      "name": "Room",
+      "item": [
+        {
+          "name": "New Request",
+          "id": "d081bbcb-ab85-47e3-8ee2-bf56c82a6602",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": ""
+            }
+          },
+          "response": []
+        }
+      ],
+      "id": "46289e8f-5561-49f3-b7ba-71630c522b67"
+    }
+  ],
+  "variable": [
+    {
+      "id": "f4dd9cfe-b247-45f4-88be-b99a09c8fd29",
+      "key": "token_b",
+      "value": ""
+    },
+    {
+      "id": "f106f71a-edba-48d3-b9d7-0f26fc7eafae",
+      "key": "userId",
+      "value": ""
+    },
+    {
+      "id": "30384644-45b7-426a-91af-4b6bc8d1ce56",
+      "key": "token_a",
+      "value": ""
+    },
+    {
+      "id": "5caf7985-0467-4157-951f-7c79d2b3e9eb",
+      "key": "userId1",
+      "value": ""
+    },
+    {
+      "id": "9316976c-89cb-438c-a0a4-f92a047e8006",
+      "key": "userId2",
+      "value": ""
+    }
+  ]
+}
