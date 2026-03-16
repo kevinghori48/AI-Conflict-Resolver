@@ -114,6 +114,20 @@ export const setupDisputeSocket = (io) => {
       });
       console.log(`[EMIT] dispute_state | to: ${socket.user.email} | dispute: ${roomId}`);
 
+      // Notify User 1 immediately when User 2 joins for the first time
+      if (isJoiner && dispute.status === "CONVERSATION") {
+        socket.to(roomId).emit("joiner_connected", {
+          joiner_id: socket.userId,
+          joiner_name: `${socket.user.firstName} ${socket.user.lastName}`,
+          joiner_email: socket.user.email,
+          status: dispute.status,
+          dispute_name: dispute.dispute_name,
+          message: `${socket.user.firstName} has joined the dispute. You can start the conversation.`,
+          timestamp: new Date()
+        });
+        console.log(`[EMIT] joiner_connected | to room: ${roomId} | joiner: ${socket.user.email}`);
+      }
+
       socket.to(roomId).emit("user_online", {
         user_id: socket.userId,
         user_role: socket.userRole,
@@ -417,6 +431,22 @@ export const setupDisputeSocket = (io) => {
         return;
       }
 
+      const approverRole = isCreator ? "creator" : "joiner";
+
+      // Emit to the whole room so BOTH users know who just approved and the current status
+      io.to(roomId).emit("summary_approved", {
+        approved_by: approverRole,
+        approved_by_name: `${socket.user.firstName} ${socket.user.lastName}`,
+        creator_approved: updated.summary_approval.creator_approved,
+        joiner_approved: updated.summary_approval.joiner_approved,
+        both_approved: updated.summary_approval.creator_approved && updated.summary_approval.joiner_approved,
+        message: updated.summary_approval.creator_approved && updated.summary_approval.joiner_approved
+          ? "Both parties approved the summary."
+          : `${socket.user.firstName} approved the summary. Waiting for the other party.`,
+        timestamp: new Date()
+      });
+      console.log(`[EMIT] summary_approved | to room: ${roomId} | by: ${approverRole} | creator: ${updated.summary_approval.creator_approved} joiner: ${updated.summary_approval.joiner_approved}`);
+
       if (updated.summary_approval.creator_approved && updated.summary_approval.joiner_approved) {
         const claimed = await OfficialDispute.findOneAndUpdate(
           { _id: roomId, status: "SUMMARY_REVIEW" },
@@ -468,14 +498,7 @@ export const setupDisputeSocket = (io) => {
         return;
       }
 
-      io.to(roomId).emit("approval_update", {
-        creator_approved: updated.summary_approval.creator_approved,
-        joiner_approved: updated.summary_approval.joiner_approved,
-        message: "Approval recorded. Waiting for other party.",
-        timestamp: new Date()
-      });
-      console.log(`[EMIT] approval_update | to room: ${roomId} | creator: ${updated.summary_approval.creator_approved} joiner: ${updated.summary_approval.joiner_approved}`);
-
+      // summary_approved (emitted above) already notified both parties — just send callback
       if (callback) {
         callback({
           success: true,
