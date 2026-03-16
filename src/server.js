@@ -3,7 +3,6 @@ import http from "http";
 import { Server } from "socket.io";
 import app from "./app.js";
 import { setupDisputeSocket } from "./socketHandlers/disputeSocketHandler.js";
-import { initMajorSocket } from "./socketHandlers/majorSocketHandler.js";
 
 dotenv.config();
 
@@ -17,7 +16,7 @@ const server = http.createServer(app);
 // 2. INITIALIZE SOCKET.IO
 const io = new Server(server, {
   cors: {
-    origin: "*",
+    origin: "*", // Allow all origins for now
     methods: ["GET", "POST", "PUT", "DELETE"],
     credentials: true
   },
@@ -41,13 +40,10 @@ console.log("Socket.IO attached to Express app");
 
 // 4. SETUP DISPUTE SOCKET HANDLERS
 setupDisputeSocket(io);
+
 console.log("Dispute socket handlers registered");
 
-// 5. SETUP MAJOR SOCKET HANDLERS (Room invite + Summary approval)
-initMajorSocket(io, app);
-console.log("Major socket handlers registered");
-
-// 6. GRACEFUL SHUTDOWN
+// 5. GRACEFUL SHUTDOWN
 process.on("SIGTERM", () => {
   console.log("SIGTERM signal received: closing HTTP server");
   server.close(() => {
@@ -64,7 +60,7 @@ process.on("SIGINT", () => {
   });
 });
 
-// 7. START SERVER
+// 6. START SERVER
 server.listen(PORT, () => {
   console.log(`Server (HTTP + WebSocket) running on port ${PORT}`);
   console.log(`WebSocket ready at ws://localhost:${PORT}`);
