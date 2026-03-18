@@ -723,8 +723,24 @@ export const approveSummary = async (req, res) => {
     }
 
     if (updated.summary_approval.creator_approved && updated.summary_approval.joiner_approved) {
+      // Emit summary_approved with both_approved: true BEFORE triggering generation
+      if (req.app.get('io')) {
+        const approverRole = isCreator ? "creator" : "joiner";
+        const ts = new Date();
+        // Send to EACH socket separately so each user gets their own `your_approval` value
+        const approverSocketId = req.app.get('approverSocket_' + req.user._id.toString());
+        req.app.get('io').to(dispute_id).emit("summary_approved", {
+          approved_by: approverRole,
+          creator_approved: true,
+          joiner_approved: true,
+          both_approved: true,
+          your_approval: true,   // both approved so true for everyone
+          message: "Both parties approved the summary.",
+          timestamp: ts
+        });
+      }
+
       // Atomically claim the right to trigger generation by flipping status exactly once.
-      // If two requests somehow both reach this point, only one will succeed the CAS.
       const claimed = await OfficialDispute.findOneAndUpdate(
         { _id: dispute_id, status: "SUMMARY_REVIEW" },
         { $set: { status: "AI_SUMMARIZING" } },
@@ -732,7 +748,6 @@ export const approveSummary = async (req, res) => {
       );
 
       if (!claimed) {
-        // Another concurrent request already flipped status — generation already queued
         return res.json({
           success: true,
           message: "Both parties approved. Generating solution options...",
@@ -793,14 +808,23 @@ export const approveSummary = async (req, res) => {
 
     if (req.app.get('io')) {
       const approverRole = isCreator ? "creator" : "joiner";
-      req.app.get('io').to(dispute_id).emit("summary_approved", {
+      const io = req.app.get('io');
+      const ts = new Date();
+      const basePayload = {
         approved_by: approverRole,
         creator_approved: updated.summary_approval.creator_approved,
         joiner_approved: updated.summary_approval.joiner_approved,
-        both_approved: updated.summary_approval.creator_approved && updated.summary_approval.joiner_approved,
-        message: "Approval recorded. Waiting for other party.",
-        timestamp: new Date()
-      });
+        both_approved: false,
+        message: `${approverRole === "creator" ? "Person A" : "Person B"} approved the summary. Waiting for the other party.`,
+        timestamp: ts
+      };
+
+      // fetchSockets() lets us emit differently per socket using userId set in the socket handler
+      const allSockets = await io.in(dispute_id).fetchSockets();
+      for (const s of allSockets) {
+        const isApprover = s.userId === req.user._id.toString();
+        s.emit("summary_approved", { ...basePayload, your_approval: isApprover });
+      }
     }
 
     res.json({
