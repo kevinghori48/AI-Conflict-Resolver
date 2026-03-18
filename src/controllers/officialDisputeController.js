@@ -792,9 +792,12 @@ export const approveSummary = async (req, res) => {
     }
 
     if (req.app.get('io')) {
-      req.app.get('io').to(dispute_id).emit("approval_update", {
+      const approverRole = isCreator ? "creator" : "joiner";
+      req.app.get('io').to(dispute_id).emit("summary_approved", {
+        approved_by: approverRole,
         creator_approved: updated.summary_approval.creator_approved,
         joiner_approved: updated.summary_approval.joiner_approved,
+        both_approved: updated.summary_approval.creator_approved && updated.summary_approval.joiner_approved,
         message: "Approval recorded. Waiting for other party.",
         timestamp: new Date()
       });
