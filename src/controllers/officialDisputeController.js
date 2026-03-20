@@ -723,21 +723,23 @@ export const approveSummary = async (req, res) => {
     }
 
     if (updated.summary_approval.creator_approved && updated.summary_approval.joiner_approved) {
-      // Emit summary_approved with both_approved: true BEFORE triggering generation
+      // Emit summary_approved (both_approved: true) to every socket individually
+      // so each user gets their own your_approval value
       if (req.app.get('io')) {
         const approverRole = isCreator ? "creator" : "joiner";
         const ts = new Date();
-        // Send to EACH socket separately so each user gets their own `your_approval` value
-        const approverSocketId = req.app.get('approverSocket_' + req.user._id.toString());
-        req.app.get('io').to(dispute_id).emit("summary_approved", {
-          approved_by: approverRole,
-          creator_approved: true,
-          joiner_approved: true,
-          both_approved: true,
-          your_approval: true,   // both approved so true for everyone
-          message: "Both parties approved the summary.",
-          timestamp: ts
-        });
+        const allSockets = await req.app.get('io').in(dispute_id).fetchSockets();
+        for (const s of allSockets) {
+          s.emit("summary_approved", {
+            approved_by:      approverRole,
+            creator_approved: true,
+            joiner_approved:  true,
+            both_approved:    true,
+            your_approval:    true, // both approved — true for everyone
+            message:          "Both parties approved the summary.",
+            timestamp:        ts
+          });
+        }
       }
 
       // Atomically claim the right to trigger generation by flipping status exactly once.
@@ -808,22 +810,24 @@ export const approveSummary = async (req, res) => {
 
     if (req.app.get('io')) {
       const approverRole = isCreator ? "creator" : "joiner";
-      const io = req.app.get('io');
-      const ts = new Date();
-      const basePayload = {
-        approved_by: approverRole,
+      const io           = req.app.get('io');
+      const ts           = new Date();
+      const basePayload  = {
+        approved_by:      approverRole,
         creator_approved: updated.summary_approval.creator_approved,
-        joiner_approved: updated.summary_approval.joiner_approved,
-        both_approved: false,
-        message: `${approverRole === "creator" ? "Person A" : "Person B"} approved the summary. Waiting for the other party.`,
-        timestamp: ts
+        joiner_approved:  updated.summary_approval.joiner_approved,
+        both_approved:    false,
+        message:          `${approverRole === "creator" ? "Person A" : "Person B"} approved the summary. Waiting for the other party.`,
+        timestamp:        ts
       };
 
-      // fetchSockets() lets us emit differently per socket using userId set in the socket handler
+      // Emit individually so each socket gets its own your_approval value
       const allSockets = await io.in(dispute_id).fetchSockets();
       for (const s of allSockets) {
-        const isApprover = s.userId === req.user._id.toString();
-        s.emit("summary_approved", { ...basePayload, your_approval: isApprover });
+        s.emit("summary_approved", {
+          ...basePayload,
+          your_approval: s.userId === req.user._id.toString()
+        });
       }
     }
 
@@ -1877,21 +1881,51 @@ export const getDisputeStatus = async (req, res) => {
 
 export const getUserDisputes = async (req, res) => {
   try {
-    const { status, limit = 50 } = req.query;
+    const {
+      status,
+      search,
+      page  = 1,
+      limit = 10
+    } = req.query;
+
+    const pageNum  = Math.max(1, parseInt(page));
+    const limitNum = Math.min(50, Math.max(1, parseInt(limit))); // hard cap at 50
+    const skip     = (pageNum - 1) * limitNum;
 
     const query = {
       $or: [{ creator_id: req.user._id }, { joiner_id: req.user._id }]
     };
 
+    // Filter by status
     if (status) query.status = status;
 
-    const disputes = await OfficialDispute.find(query)
-      .populate("creator_id", "firstName lastName email")
-      .populate("joiner_id", "firstName lastName email")
-      .sort({ updatedAt: -1 })
-      .limit(parseInt(limit));
+    // Search by dispute name (case-insensitive)
+    if (search && search.trim()) {
+      query.dispute_name = { $regex: search.trim(), $options: "i" };
+    }
 
-    res.json({ success: true, count: disputes.length, disputes });
+    const [disputes, total] = await Promise.all([
+      OfficialDispute.find(query)
+        .populate("creator_id", "firstName lastName email")
+        .populate("joiner_id", "firstName lastName email")
+        .sort({ updatedAt: -1 })
+        .skip(skip)
+        .limit(limitNum),
+      OfficialDispute.countDocuments(query)
+    ]);
+
+    const totalPages = Math.ceil(total / limitNum);
+
+    res.json({
+      success:      true,
+      count:        disputes.length,
+      total,
+      page:         pageNum,
+      total_pages:  totalPages,
+      has_next:     pageNum < totalPages,
+      has_prev:     pageNum > 1,
+      disputes
+    });
   } catch (err) {
     console.error("Get user disputes error:", err);
     res.status(500).json({ message: "Failed to fetch disputes", error: err.message });
