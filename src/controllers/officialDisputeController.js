@@ -292,9 +292,12 @@ export const sendAudioMessage = async (req, res) => {
     await dispute.save();
     await message.populate("sender_id", "firstName lastName email");
 
+    const audioUrl = `${req.protocol}://${req.get("host")}/official-dispute/message/audio/${message._id}`;
+
     if (req.app.get('io')) {
       req.app.get('io').to(dispute_id).emit("new_message", {
         message,
+        audio_url: message.message_type === "audio" ? audioUrl : undefined,
         sender_role: senderRole,
         audio_count: dispute.conversation.audio_count,
         remaining: 5 - dispute.conversation.audio_count[senderRole],
@@ -305,6 +308,7 @@ export const sendAudioMessage = async (req, res) => {
     res.json({
       success: true,
       message,
+      audio_url: audioUrl,
       remaining_audios: 5 - dispute.conversation.audio_count[senderRole],
       audio_count: dispute.conversation.audio_count
     });
