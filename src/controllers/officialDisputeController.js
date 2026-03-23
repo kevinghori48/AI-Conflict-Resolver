@@ -292,12 +292,9 @@ export const sendAudioMessage = async (req, res) => {
     await dispute.save();
     await message.populate("sender_id", "firstName lastName email");
 
-    const audioUrl = `${req.protocol}://${req.get("host")}/official-dispute/message/audio/${message._id}`;
-
     if (req.app.get('io')) {
       req.app.get('io').to(dispute_id).emit("new_message", {
         message,
-        audio_url: message.message_type === "audio" ? audioUrl : undefined,
         sender_role: senderRole,
         audio_count: dispute.conversation.audio_count,
         remaining: 5 - dispute.conversation.audio_count[senderRole],
@@ -308,7 +305,6 @@ export const sendAudioMessage = async (req, res) => {
     res.json({
       success: true,
       message,
-      audio_url: audioUrl,
       remaining_audios: 5 - dispute.conversation.audio_count[senderRole],
       audio_count: dispute.conversation.audio_count
     });
@@ -1280,12 +1276,24 @@ export const acceptSuggestedPlan = async (req, res) => {
     }
 
     if (req.app.get('io')) {
-      req.app.get('io').to(dispute_id).emit("suggested_plan_approval_update", {
-        creator_approved: dispute.suggested_plan_approval.creator_approved,
-        joiner_approved: dispute.suggested_plan_approval.joiner_approved,
-        message: "Acceptance recorded. Waiting for other party.",
-        timestamp: new Date()
-      });
+      const io = req.app.get('io');
+      const allSockets = await io.in(dispute_id).fetchSockets();
+      for (const s of allSockets) {
+        s.emit("suggested_plan_approval_update", {
+          approved_by: isCreator ? "creator" : "joiner",
+          approved_by_name: `${req.user.firstName} ${req.user.lastName}`,
+          creator_approved: dispute.suggested_plan_approval.creator_approved,
+          joiner_approved: dispute.suggested_plan_approval.joiner_approved,
+          both_approved: false,
+          your_approval: s.userId === req.user._id.toString()
+            ? true
+            : (s.userRole === "creator"
+                ? dispute.suggested_plan_approval.creator_approved
+                : dispute.suggested_plan_approval.joiner_approved),
+          message: `${req.user.firstName} accepted the plan. Waiting for the other party.`,
+          timestamp: new Date()
+        });
+      }
     }
 
     res.json({
