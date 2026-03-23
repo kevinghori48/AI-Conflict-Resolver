@@ -334,10 +334,13 @@ export const setupDisputeSocket = (io) => {
         await dispute.save();
         await message.populate('sender_id', 'firstName lastName email');
 
+        const audioUrl = `${process.env.SERVER_URL || "http://localhost:5001"}/official-dispute/message/audio/${message._id}`;
+
         if (callback) {
           callback({
             success: true,
             message,
+            audio_url: audioUrl,
             remaining_audios: 5 - dispute.conversation.audio_count[senderRole],
             timestamp: new Date()
           });
@@ -345,6 +348,7 @@ export const setupDisputeSocket = (io) => {
 
         io.to(dispute_id).emit("new_message", {
           message,
+          audio_url: audioUrl,
           sender_role: senderRole,
           audio_count: dispute.conversation.audio_count,
           remaining: 5 - dispute.conversation.audio_count[senderRole],
@@ -1947,6 +1951,7 @@ OUTPUT JSON:
       socket.userRole = null;
     });
 
+    // ─── DISCONNECT ───────────────────────────────────────────────────────────
     socket.on("disconnect", (reason) => {
       console.log(`\nDISCONNECT: ${socket.id} - Reason: ${reason}\n`);
       if (socket.currentDispute && socket.authenticated) {
