@@ -1947,7 +1947,6 @@ OUTPUT JSON:
       socket.userRole = null;
     });
 
-    // ─── DISCONNECT ───────────────────────────────────────────────────────────
     socket.on("disconnect", (reason) => {
       console.log(`\nDISCONNECT: ${socket.id} - Reason: ${reason}\n`);
       if (socket.currentDispute && socket.authenticated) {
