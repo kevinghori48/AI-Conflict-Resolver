@@ -334,7 +334,7 @@ export const setupDisputeSocket = (io) => {
         await dispute.save();
         await message.populate('sender_id', 'firstName lastName email');
 
-        const audioUrl = `${process.env.SERVER_URL || "http://localhost:5001"}/official-dispute/message/audio/${message._id}`;
+        const audioUrl = `${process.env.SERVER_URL || "https://localhost:5001"}/official-dispute/message/audio/${message._id}`;
 
         if (callback) {
           callback({
