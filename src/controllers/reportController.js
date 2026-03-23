@@ -96,6 +96,16 @@ export const createReport = async (req, res) => {
       return res.status(400).json({ message: "Conversation type is required." });
     }
 
+    const validTypes = ["Relationship", "Work", "Family", "Friendship", "Other"];
+    const normalizedType = validTypes.find(
+      t => t.toLowerCase() === conversation_type.toLowerCase()
+    );
+    if (!normalizedType) {
+      return res.status(400).json({
+        message: `Invalid conversation_type. Must be one of: ${validTypes.join(", ")}`
+      });
+    }
+
     // A. Save Audios to DB
     const audioDocs = [];
     for (const file of files) {
@@ -111,15 +121,15 @@ export const createReport = async (req, res) => {
 
     // B. Generate Analysis
     console.log(`Analyzing ${files.length} files...`);
-    const analysis = await generateAnalysis(audioDocs, conversation_type, objective);
+    const analysis = await generateAnalysis(audioDocs, normalizedType, objective);
 
     // C. Save Report
     const report = await Report.create({
       user_id: req.user._id,
       audio_ids: audioDocs.map(a => a._id),
-      conversation_type,
+      conversation_type: normalizedType,
       objective,
-      title: `${conversation_type} Analysis`,
+      title: `${normalizedType} Analysis`,
       // Mapping Gemini JSON to our Schema
       conflict_score: analysis.conflict_score,
       emotional_intensity: analysis.emotional_intensity,
