@@ -334,13 +334,10 @@ export const setupDisputeSocket = (io) => {
         await dispute.save();
         await message.populate('sender_id', 'firstName lastName email');
 
-        const audioUrl = `${process.env.SERVER_URL || "http://localhost:5001"}/official-dispute/message/audio/${message._id}`;
-
         if (callback) {
           callback({
             success: true,
             message,
-            audio_url: audioUrl,
             remaining_audios: 5 - dispute.conversation.audio_count[senderRole],
             timestamp: new Date()
           });
@@ -348,7 +345,6 @@ export const setupDisputeSocket = (io) => {
 
         io.to(dispute_id).emit("new_message", {
           message,
-          audio_url: audioUrl,
           sender_role: senderRole,
           audio_count: dispute.conversation.audio_count,
           remaining: 5 - dispute.conversation.audio_count[senderRole],
@@ -874,12 +870,23 @@ OUTPUT JSON:
         return;
       }
 
-      io.to(roomId).emit("suggested_plan_approval_update", {
-        creator_approved: dispute.suggested_plan_approval.creator_approved,
-        joiner_approved: dispute.suggested_plan_approval.joiner_approved,
-        message: "Acceptance recorded. Waiting for other party.",
-        timestamp: new Date()
-      });
+      const allSockets = await io.in(roomId).fetchSockets();
+      for (const s of allSockets) {
+        s.emit("suggested_plan_approval_update", {
+          approved_by: role,
+          approved_by_name: `${socket.user.firstName} ${socket.user.lastName}`,
+          creator_approved: dispute.suggested_plan_approval.creator_approved,
+          joiner_approved: dispute.suggested_plan_approval.joiner_approved,
+          both_approved: false,
+          your_approval: s.userId === socket.userId
+            ? true
+            : (s.userRole === "creator"
+                ? dispute.suggested_plan_approval.creator_approved
+                : dispute.suggested_plan_approval.joiner_approved),
+          message: `${socket.user.firstName} accepted the plan. Waiting for the other party.`,
+          timestamp: new Date()
+        });
+      }
       console.log(`[EMIT] suggested_plan_approval_update | to room: ${roomId} | by: ${role} | creator: ${dispute.suggested_plan_approval.creator_approved} joiner: ${dispute.suggested_plan_approval.joiner_approved}`);
 
       if (callback) {
