@@ -76,6 +76,7 @@ const officialDisputeSchema = new mongoose.Schema({
 
   // AI Summary
   ai_summary: {
+    main_topic: String,
     summary_text: String,
     key_points: [{
       point: String,
