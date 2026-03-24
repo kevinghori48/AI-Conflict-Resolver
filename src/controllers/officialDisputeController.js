@@ -507,6 +507,7 @@ TASK: Create a comprehensive, balanced summary of this conversation.
 
 OUTPUT JSON:
 {
+  "main_topic": "One short sentence (max 10 words) describing the core issue of this dispute",
   "summary_text": "A detailed 2-3 paragraph overview",
   "key_points": [
     {
@@ -524,6 +525,7 @@ OUTPUT JSON:
     }
 
     dispute.ai_summary = {
+      main_topic: summary.main_topic || null,
       summary_text: summary.summary_text,
       key_points: summary.key_points,
       generated_at: new Date(),
@@ -634,6 +636,7 @@ TASK: Generate an IMPROVED summary that specifically addresses the user's feedba
 
 OUTPUT JSON:
 {
+  "main_topic": "One short sentence (max 10 words) describing the core issue of this dispute",
   "summary_text": "Improved 2-3 paragraph summary addressing the feedback",
   "key_points": [
     {
@@ -646,6 +649,7 @@ OUTPUT JSON:
       const response = await callGemini(prompt);
       const newSummary = cleanAIResponse(response);
 
+      dispute.ai_summary.main_topic = newSummary.main_topic || dispute.ai_summary.main_topic;
       dispute.ai_summary.summary_text = newSummary.summary_text;
       dispute.ai_summary.key_points = newSummary.key_points;
       dispute.ai_summary.generated_at = new Date();
@@ -1949,9 +1953,7 @@ export const getUserDisputes = async (req, res) => {
       status:            d.status,
       invite_code:       d.invite_code,
       relationship_type: d.intake_data?.relationship_type,
-      main_topic:        d.ai_summary?.summary_text
-        ? d.ai_summary.summary_text.split(/[.\n]/)[0].trim() + "."
-        : null,
+      main_topic:        d.ai_summary?.main_topic || null,
       creator:           d.creator_id,
       joiner:            d.joiner_id,
       createdAt:         d.createdAt,
