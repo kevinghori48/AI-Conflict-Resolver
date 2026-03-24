@@ -1079,12 +1079,21 @@ export const selectSolutions = async (req, res) => {
     }
 
     if (req.app.get('io')) {
-      req.app.get('io').to(dispute_id).emit("selection_update", {
-        message: "Selection recorded. Waiting for other party.",
-        has_creator_selected: creatorVotes.length > 0,
-        has_joiner_selected: joinerVotes.length > 0,
-        timestamp: new Date()
-      });
+      const io = req.app.get('io');
+      const allSockets = await io.in(dispute_id).fetchSockets();
+      for (const s of allSockets) {
+        const isCreatorSocket = s.userRole === "creator";
+        s.emit("selection_update", {
+          selected_by: isCreator ? "creator" : "joiner",
+          has_creator_selected: creatorVotes.length > 0,
+          has_joiner_selected: joinerVotes.length > 0,
+          both_selected: false,
+          you_selected: isCreatorSocket ? creatorVotes.length > 0 : joinerVotes.length > 0,
+          other_selected: isCreatorSocket ? joinerVotes.length > 0 : creatorVotes.length > 0,
+          message: "Selection recorded. Waiting for other party.",
+          timestamp: new Date()
+        });
+      }
     }
 
     res.json({
@@ -1932,6 +1941,14 @@ export const getUserDisputes = async (req, res) => {
 
     const totalPages = Math.ceil(total / limitNum);
 
+    const disputesWithSummary = disputes.map(d => {
+      const obj = d.toObject();
+      obj.short_summary = d.ai_summary?.summary_text
+        ? d.ai_summary.summary_text.split(".")[0].trim() + "."
+        : null;
+      return obj;
+    });
+
     res.json({
       success:      true,
       count:        disputes.length,
@@ -1940,7 +1957,7 @@ export const getUserDisputes = async (req, res) => {
       total_pages:  totalPages,
       has_next:     pageNum < totalPages,
       has_prev:     pageNum > 1,
-      disputes
+      disputes:     disputesWithSummary
     });
   } catch (err) {
     console.error("Get user disputes error:", err);

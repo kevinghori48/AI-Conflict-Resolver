@@ -796,12 +796,20 @@ OUTPUT JSON:
       }
 
       console.log(`[DEBUG] only one party voted — waiting for other`);
-      io.to(roomId).emit("selection_update", {
-        message: "Selection recorded. Waiting for other party.",
-        has_creator_selected: creatorVotes.length > 0,
-        has_joiner_selected: joinerVotes.length > 0,
-        timestamp: new Date()
-      });
+      const allSockets = await io.in(roomId).fetchSockets();
+      for (const s of allSockets) {
+        const isCreatorSocket = s.userRole === "creator";
+        s.emit("selection_update", {
+          selected_by: isCreator ? "creator" : "joiner",
+          has_creator_selected: creatorVotes.length > 0,
+          has_joiner_selected: joinerVotes.length > 0,
+          both_selected: false,
+          you_selected: isCreatorSocket ? creatorVotes.length > 0 : joinerVotes.length > 0,
+          other_selected: isCreatorSocket ? joinerVotes.length > 0 : creatorVotes.length > 0,
+          message: "Selection recorded. Waiting for other party.",
+          timestamp: new Date()
+        });
+      }
       console.log(`[EMIT] selection_update | to room: ${roomId} | creator: ${creatorVotes.length > 0} joiner: ${joinerVotes.length > 0}`);
 
       if (callback) callback({ success: true, your_selections: selected_solution_ids, waiting_for_other: true });
