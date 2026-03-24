@@ -1933,6 +1933,7 @@ export const getUserDisputes = async (req, res) => {
       OfficialDispute.find(query)
         .populate("creator_id", "firstName lastName email")
         .populate("joiner_id", "firstName lastName email")
+        .select("_id dispute_name status invite_code intake_data.relationship_type ai_summary.summary_text creator_id joiner_id createdAt updatedAt")
         .sort({ updatedAt: -1 })
         .skip(skip)
         .limit(limitNum),
@@ -1941,13 +1942,21 @@ export const getUserDisputes = async (req, res) => {
 
     const totalPages = Math.ceil(total / limitNum);
 
-    const disputesWithSummary = disputes.map(d => {
-      const obj = d.toObject();
-      obj.short_summary = d.ai_summary?.summary_text
-        ? d.ai_summary.summary_text.split(".")[0].trim() + "."
-        : null;
-      return obj;
-    });
+    // Return limited fields + main topic of AI summary for history card
+    const disputeList = disputes.map(d => ({
+      _id:               d._id,
+      dispute_name:      d.dispute_name,
+      status:            d.status,
+      invite_code:       d.invite_code,
+      relationship_type: d.intake_data?.relationship_type,
+      main_topic:        d.ai_summary?.summary_text
+        ? d.ai_summary.summary_text.split(/[.\n]/)[0].trim() + "."
+        : null,
+      creator:           d.creator_id,
+      joiner:            d.joiner_id,
+      createdAt:         d.createdAt,
+      updatedAt:         d.updatedAt
+    }));
 
     res.json({
       success:      true,
@@ -1957,11 +1966,45 @@ export const getUserDisputes = async (req, res) => {
       total_pages:  totalPages,
       has_next:     pageNum < totalPages,
       has_prev:     pageNum > 1,
-      disputes:     disputesWithSummary
+      disputes:     disputeList
     });
   } catch (err) {
     console.error("Get user disputes error:", err);
     res.status(500).json({ message: "Failed to fetch disputes", error: err.message });
+  }
+};
+
+// DETAIL PAGE: Full dispute info for a single dispute
+export const getMyDisputeDetails = async (req, res) => {
+  try {
+    const { dispute_id } = req.params;
+
+    const dispute = await OfficialDispute.findById(dispute_id)
+      .populate("creator_id", "firstName lastName email")
+      .populate("joiner_id", "firstName lastName email")
+      .populate({
+        path: "conversation.messages",
+        populate: { path: "sender_id", select: "firstName lastName email" }
+      });
+
+    if (!dispute) return res.status(404).json({ message: "Dispute not found" });
+
+    const isCreator = dispute.creator_id._id.toString() === req.user._id.toString();
+    const isJoiner  = dispute.joiner_id?._id.toString()  === req.user._id.toString();
+
+    if (!isCreator && !isJoiner) {
+      return res.status(403).json({ message: "You are not authorized to view this dispute" });
+    }
+
+    res.json({
+      success:   true,
+      user_role: isCreator ? "creator" : "joiner",
+      is_creator: isCreator,
+      dispute
+    });
+  } catch (err) {
+    console.error("Get dispute details error:", err);
+    res.status(500).json({ message: "Failed to fetch dispute details", error: err.message });
   }
 };
 

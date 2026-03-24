@@ -53,7 +53,8 @@ router.post("/final-plan/report", auth, controller.reportFinalPlanIssue);
 
 // GENERAL ENDPOINTS
 router.get("/status/:dispute_id", auth, controller.getDisputeStatus);
-router.get("/my-disputes", auth, controller.getUserDisputes);
+router.get("/my-disputes", auth, controller.getUserDisputes);              // limited data (history list)
+router.get("/my-disputes/:dispute_id", auth, controller.getMyDisputeDetails); // full data (detail page)
 router.delete("/delete/:dispute_id", auth, controller.deleteDispute);
 
 // AI SUMMARY ENDPOINT
