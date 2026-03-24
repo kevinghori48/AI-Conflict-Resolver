@@ -1937,7 +1937,7 @@ export const getUserDisputes = async (req, res) => {
       OfficialDispute.find(query)
         .populate("creator_id", "firstName lastName email")
         .populate("joiner_id", "firstName lastName email")
-        .select("_id dispute_name status invite_code intake_data.relationship_type ai_summary.summary_text creator_id joiner_id createdAt updatedAt")
+        .select("_id dispute_name status invite_code intake_data.relationship_type ai_summary.main_topic creator_id joiner_id createdAt updatedAt")
         .sort({ updatedAt: -1 })
         .skip(skip)
         .limit(limitNum),
