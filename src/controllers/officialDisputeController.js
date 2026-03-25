@@ -253,6 +253,59 @@ export const joinDispute = async (req, res) => {
 
 // SCREEN 5: CONVERSATION — AUDIO
 
+
+// SCREEN 5: CONVERSATION — AUDIO UPLOAD (step 1: upload file, get audio_id back)
+
+export const uploadAudio = async (req, res) => {
+  try {
+    const file = req.file;
+
+    if (!file) {
+      return res.status(400).json({ message: "No audio file provided" });
+    }
+
+    // Convert to MP3 for universal playback
+    const mp3Path = file.path.replace(/\.[^.]+$/, "") + ".mp3";
+    try {
+      await convertToMp3(file.path, mp3Path);
+    } catch (convErr) {
+      console.error("ffmpeg conversion failed, using raw file:", convErr);
+      fs.renameSync(file.path, mp3Path);
+    }
+
+    // Saved as a temporary audio record (not tied to a dispute yet).
+    // dispute_id, sender_role and duration are filled in when send_audio socket event fires.
+    const message = await DisputeMessage.create({
+      dispute_id:  null,
+      sender_id:   req.user._id,
+      sender_role: null,
+      message_type: "audio",
+      audio_data: {
+        file_path:     mp3Path,
+        original_name: file.originalname.replace(/\.[^.]+$/, "") + ".mp3",
+        mimetype:      "audio/mpeg",
+        size:          fs.statSync(mp3Path).size,
+        duration:      0   // updated when send_audio socket event fires
+      },
+      status: "sent"
+    });
+
+    const audioUrl = `${req.protocol}://${req.get("host")}/official-dispute/message/audio/${message._id}`;
+
+    res.json({ success: true, audio_url: audioUrl, audio_id: message._id });
+  } catch (err) {
+    console.error("Upload audio error:", err);
+    const rawPath = req.file?.path;
+    const mp3PathOnErr = rawPath ? rawPath.replace(/\.[^.]+$/, "") + ".mp3" : null;
+    for (const p of [rawPath, mp3PathOnErr]) {
+      if (p && fs.existsSync(p)) {
+        try { fs.unlinkSync(p); } catch (e) { console.error("Failed to cleanup file:", e); }
+      }
+    }
+    res.status(500).json({ message: "Failed to upload audio", error: err.message });
+  }
+};
+
 export const sendAudioMessage = async (req, res) => {
   try {
     const { dispute_id, duration } = req.body;

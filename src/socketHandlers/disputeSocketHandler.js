@@ -2,30 +2,7 @@ import OfficialDispute from "../models/OfficialDispute.js";
 import DisputeMessage from "../models/DisputeMessage.js";
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
-import { execFile } from "child_process";
 import { generateAISummary, generateFinalPlan, generateSuggestedPlan, generateSolutions } from "../controllers/officialDisputeController.js";
-
-// Convert any audio file to MP3 using ffmpeg.
-// Returns the output .mp3 path. Deletes the input file after conversion.
-const FFMPEG_PATH = process.env.FFMPEG_PATH || "ffmpeg";
-const convertToMp3 = (inputPath, outputPath) =>
-  new Promise((resolve, reject) => {
-    execFile(FFMPEG_PATH, ["-y", "-i", inputPath, "-ac", "1", "-ar", "44100", "-b:a", "128k", outputPath], (err, stdout, stderr) => {
-      if (err) {
-        console.error("[ffmpeg] conversion failed:", err.message);
-        console.error("[ffmpeg] stderr:", stderr);
-        return reject(err);
-      }
-      try { fs.unlinkSync(inputPath); } catch (_) {}
-      resolve(outputPath);
-    });
-  });
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 
 export const setupDisputeSocket = (io) => {
@@ -280,10 +257,14 @@ export const setupDisputeSocket = (io) => {
     });
 
     // ─── SEND AUDIO MESSAGE ───────────────────────────────────────────────────
-    requireAuth("send_audio", async ({ dispute_id, audio_data, duration }, callback) => {
+    // She uploads audio first via POST /upload/audio → gets audio_id back.
+    // Then emits send_audio with { dispute_id, audio_id, duration }.
+    // We look up the pre-uploaded DisputeMessage by audio_id, fill in the
+    // dispute context, then broadcast new_message to the room.
+    requireAuth("send_audio", async ({ dispute_id, audio_id, duration }, callback) => {
       try {
-        if (!audio_data) {
-          const error = { success: false, message: "No audio data provided" };
+        if (!audio_id) {
+          const error = { success: false, message: "audio_id is required" };
           if (callback) callback(error);
           return;
         }
@@ -320,49 +301,33 @@ export const setupDisputeSocket = (io) => {
           return;
         }
 
-        const uploadsDir = path.join(__dirname, "../../uploads");
-        if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
-
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        const tempPath  = path.join(uploadsDir, `audio-${uniqueSuffix}.tmp`);
-        const finalPath = path.join(uploadsDir, `audio-${uniqueSuffix}.mp3`);
-
-        let base64Data = audio_data;
-        if (base64Data.includes("base64,")) base64Data = base64Data.split("base64,")[1];
-        fs.writeFileSync(tempPath, Buffer.from(base64Data, 'base64'));
-
-        // Convert to MP3 so every client (including iOS) can play it natively.
-        // tempPath is deleted inside convertToMp3 after conversion.
-        let filePath;
-        try {
-          filePath = await convertToMp3(tempPath, finalPath);
-        } catch (convErr) {
-          console.error("ffmpeg conversion failed, falling back to raw file:", convErr);
-          fs.renameSync(tempPath, finalPath);
-          filePath = finalPath;
+        // Find the pre-uploaded message and fill in dispute context
+        const message = await DisputeMessage.findById(audio_id);
+        if (!message || message.message_type !== "audio") {
+          const error = { success: false, message: "Audio not found. Upload the file first via POST /upload/audio" };
+          if (callback) callback(error);
+          return;
         }
 
-        const message = await DisputeMessage.create({
-          dispute_id,
-          sender_id: socket.userId,
-          sender_role: senderRole,
-          message_type: "audio",
-          audio_data: {
-            file_path: filePath,
-            original_name: "voice_message.mp3",
-            mimetype: "audio/mpeg",
-            size: fs.statSync(filePath).size,
-            duration: duration || 30
-          },
-          status: "sent"
-        });
+        // Make sure this audio belongs to the sender (security check)
+        if (message.sender_id.toString() !== socket.userId) {
+          const error = { success: false, message: "This audio was not uploaded by you" };
+          if (callback) callback(error);
+          return;
+        }
+
+        // Fill in dispute context now that we know it
+        message.dispute_id  = dispute_id;
+        message.sender_role = senderRole;
+        message.audio_data.duration = duration || 30;
+        await message.save();
 
         dispute.conversation.messages.push(message._id);
         dispute.conversation.audio_count[senderRole] = currentCount + 1;
         await dispute.save();
         await message.populate('sender_id', 'firstName lastName email');
 
-        const audioUrl = `${process.env.SERVER_URL || "https://localhost:5001"}/official-dispute/message/audio/${message._id}`;
+        const audioUrl = `${process.env.SERVER_URL}/official-dispute/message/audio/${message._id}`;
 
         if (callback) {
           callback({

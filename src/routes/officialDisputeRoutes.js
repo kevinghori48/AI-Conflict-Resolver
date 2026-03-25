@@ -5,6 +5,9 @@ import * as controller from "../controllers/officialDisputeController.js";
 
 const router = express.Router();
 
+// AUDIO UPLOAD (step 1 — upload file, get audio_id back, then emit send_audio via socket)
+router.post("/upload/audio", auth, upload.single("audio"), controller.uploadAudio);
+
 // SCREEN 1 & 2: Dispute Creation
 router.get("/questions/:relationship_type", auth, controller.getRelationshipQuestions);
 router.post("/create", auth, controller.createDispute);
