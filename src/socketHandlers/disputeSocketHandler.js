@@ -10,11 +10,16 @@ import { generateAISummary, generateFinalPlan, generateSuggestedPlan, generateSo
 
 // Convert any audio file to MP3 using ffmpeg.
 // Returns the output .mp3 path. Deletes the input file after conversion.
+const FFMPEG_PATH = process.env.FFMPEG_PATH || "ffmpeg";
 const convertToMp3 = (inputPath, outputPath) =>
   new Promise((resolve, reject) => {
-    execFile("ffmpeg", ["-y", "-i", inputPath, "-ac", "1", "-ar", "44100", "-b:a", "128k", outputPath], (err) => {
-      if (err) return reject(err);                      // keep inputPath intact so caller can fallback
-      try { fs.unlinkSync(inputPath); } catch (_) {}   // only delete on success
+    execFile(FFMPEG_PATH, ["-y", "-i", inputPath, "-ac", "1", "-ar", "44100", "-b:a", "128k", outputPath], (err, stdout, stderr) => {
+      if (err) {
+        console.error("[ffmpeg] conversion failed:", err.message);
+        console.error("[ffmpeg] stderr:", stderr);
+        return reject(err);
+      }
+      try { fs.unlinkSync(inputPath); } catch (_) {}
       resolve(outputPath);
     });
   });
