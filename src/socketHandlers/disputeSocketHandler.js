@@ -5,7 +5,19 @@ import User from "../models/User.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { execFile } from "child_process";
 import { generateAISummary, generateFinalPlan, generateSuggestedPlan, generateSolutions } from "../controllers/officialDisputeController.js";
+
+// Convert any audio file to MP3 using ffmpeg.
+// Returns the output .mp3 path. Deletes the input file after conversion.
+const convertToMp3 = (inputPath, outputPath) =>
+  new Promise((resolve, reject) => {
+    execFile("ffmpeg", ["-y", "-i", inputPath, "-ac", "1", "-ar", "44100", "-b:a", "128k", outputPath], (err) => {
+      if (err) return reject(err);                      // keep inputPath intact so caller can fallback
+      try { fs.unlinkSync(inputPath); } catch (_) {}   // only delete on success
+      resolve(outputPath);
+    });
+  });
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -307,12 +319,23 @@ export const setupDisputeSocket = (io) => {
         if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        const filename = `audio-${uniqueSuffix}.webm`;
-        const filePath = path.join(uploadsDir, filename);
+        const tempPath  = path.join(uploadsDir, `audio-${uniqueSuffix}.tmp`);
+        const finalPath = path.join(uploadsDir, `audio-${uniqueSuffix}.mp3`);
 
         let base64Data = audio_data;
         if (base64Data.includes("base64,")) base64Data = base64Data.split("base64,")[1];
-        fs.writeFileSync(filePath, Buffer.from(base64Data, 'base64'));
+        fs.writeFileSync(tempPath, Buffer.from(base64Data, 'base64'));
+
+        // Convert to MP3 so every client (including iOS) can play it natively.
+        // tempPath is deleted inside convertToMp3 after conversion.
+        let filePath;
+        try {
+          filePath = await convertToMp3(tempPath, finalPath);
+        } catch (convErr) {
+          console.error("ffmpeg conversion failed, falling back to raw file:", convErr);
+          fs.renameSync(tempPath, finalPath);
+          filePath = finalPath;
+        }
 
         const message = await DisputeMessage.create({
           dispute_id,
@@ -321,9 +344,9 @@ export const setupDisputeSocket = (io) => {
           message_type: "audio",
           audio_data: {
             file_path: filePath,
-            original_name: "voice_message.webm",
-            mimetype: "audio/webm",
-            size: Buffer.from(base64Data, 'base64').length,
+            original_name: "voice_message.mp3",
+            mimetype: "audio/mpeg",
+            size: fs.statSync(filePath).size,
             duration: duration || 30
           },
           status: "sent"

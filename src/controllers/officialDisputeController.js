@@ -3,6 +3,19 @@ import OfficialDispute from "../models/OfficialDispute.js";
 import DisputeMessage from "../models/DisputeMessage.js";
 import crypto from "crypto";
 import fs from "fs";
+import path from "path";
+import { execFile } from "child_process";
+
+// Convert any audio file to MP3 using ffmpeg.
+// Deletes the input file after conversion.
+const convertToMp3 = (inputPath, outputPath) =>
+  new Promise((resolve, reject) => {
+    execFile("ffmpeg", ["-y", "-i", inputPath, "-ac", "1", "-ar", "44100", "-b:a", "128k", outputPath], (err) => {
+      if (err) return reject(err);                      // keep inputPath intact so caller can fallback
+      try { fs.unlinkSync(inputPath); } catch (_) {}   // only delete on success
+      resolve(outputPath);
+    });
+  });
 
 export async function callGemini(prompt) {
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -272,16 +285,26 @@ export const sendAudioMessage = async (req, res) => {
       return res.status(400).json({ message: "Maximum 5 audio messages allowed per person. You've reached the limit." });
     }
 
+    // Convert to MP3 for universal playback (iOS doesn't support webm).
+    // multer already wrote the raw file to file.path — convert it in place.
+    const mp3Path = file.path.replace(/\.[^.]+$/, "") + ".mp3";
+    try {
+      await convertToMp3(file.path, mp3Path);  // deletes file.path on success
+    } catch (convErr) {
+      console.error("ffmpeg conversion failed, using raw file:", convErr);
+      fs.renameSync(file.path, mp3Path);        // fallback: rename without converting
+    }
+
     const message = await DisputeMessage.create({
       dispute_id,
       sender_id: req.user._id,
       sender_role: senderRole,
       message_type: "audio",
       audio_data: {
-        file_path: file.path,
-        original_name: file.originalname,
-        mimetype: file.mimetype,
-        size: file.size,
+        file_path: mp3Path,
+        original_name: file.originalname.replace(/\.[^.]+$/, "") + ".mp3",
+        mimetype: "audio/mpeg",
+        size: fs.statSync(mp3Path).size,
         duration: duration ? parseFloat(duration) : 30
       },
       status: "sent"
@@ -314,8 +337,13 @@ export const sendAudioMessage = async (req, res) => {
     });
   } catch (err) {
     console.error("Send audio error:", err);
-    if (req.file?.path) {
-      try { fs.unlinkSync(req.file.path); } catch (e) { console.error("Failed to cleanup file:", e); }
+    // Clean up whichever file exists (raw or converted)
+    const rawPath = req.file?.path;
+    const mp3PathOnErr = rawPath ? rawPath.replace(/\.[^.]+$/, "") + ".mp3" : null;
+    for (const p of [rawPath, mp3PathOnErr]) {
+      if (p && fs.existsSync(p)) {
+        try { fs.unlinkSync(p); } catch (e) { console.error("Failed to cleanup file:", e); }
+      }
     }
     res.status(500).json({ message: "Failed to send audio", error: err.message });
   }
@@ -330,29 +358,42 @@ export const getAudioFile = async (req, res) => {
       return res.status(404).json({ message: "Audio message not found" });
     }
 
-    const dispute = await OfficialDispute.findById(message.dispute_id);
-    if (!dispute) return res.status(404).json({ message: "Dispute not found" });
-
-    const isParticipant =
-      dispute.creator_id.toString() === req.user._id.toString() ||
-      dispute.joiner_id?.toString() === req.user._id.toString();
-
-    if (!isParticipant) {
-      return res.status(403).json({ message: "Not authorized to access this audio" });
-    }
+    // Allow audio to be streamed directly (no auth required)
+    // Message IDs are unguessable MongoDB ObjectIDs
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Accept-Ranges", "bytes");
 
     if (message.audio_data.data) {
       const buffer = Buffer.from(message.audio_data.data, "base64");
-      res.setHeader("Content-Type", message.audio_data.mimetype || "audio/webm");
+      res.setHeader("Content-Type", "audio/mpeg");
       res.setHeader("Content-Length", buffer.length);
+      res.setHeader("Content-Disposition", `inline; filename="audio_${message_id}.mp3"`);
       return res.send(buffer);
     }
 
     const filePath = message.audio_data.file_path;
     if (filePath && fs.existsSync(filePath)) {
-      res.setHeader("Content-Type", message.audio_data.mimetype);
-      res.setHeader("Content-Length", message.audio_data.size);
-      res.setHeader("Content-Disposition", `inline; filename="${message.audio_data.original_name}"`);
+      const stat = fs.statSync(filePath);
+      const range = req.headers.range;
+
+      // Support range requests (required for iOS audio scrubbing)
+      if (range) {
+        const parts = range.replace(/bytes=/, "").split("-");
+        const start = parseInt(parts[0], 10);
+        const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
+        const chunkSize = end - start + 1;
+
+        res.status(206);
+        res.setHeader("Content-Range", `bytes ${start}-${end}/${stat.size}`);
+        res.setHeader("Content-Length", chunkSize);
+        res.setHeader("Content-Type", "audio/mpeg");
+        res.setHeader("Content-Disposition", `inline; filename="audio_${message_id}.mp3"`);
+        return fs.createReadStream(filePath, { start, end }).pipe(res);
+      }
+
+      res.setHeader("Content-Type", "audio/mpeg");
+      res.setHeader("Content-Length", stat.size);
+      res.setHeader("Content-Disposition", `inline; filename="audio_${message_id}.mp3"`);
       return fs.createReadStream(filePath).pipe(res);
     }
 

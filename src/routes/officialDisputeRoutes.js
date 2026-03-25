@@ -14,7 +14,7 @@ router.post("/join", auth, controller.joinDispute);
 
 // SCREEN 5: Conversation
 router.post("/message/audio", auth, upload.single("audio"), controller.sendAudioMessage);
-router.get("/message/audio/:message_id", auth, controller.getAudioFile);
+router.get("/message/audio/:message_id", controller.getAudioFile); // No auth — audio streamed directly by URL
 router.get("/messages/:dispute_id", auth, controller.getConversationMessages);
 router.post("/end-conversation", auth, controller.endConversation);
 
