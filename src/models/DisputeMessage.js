@@ -4,8 +4,6 @@ const disputeMessageSchema = new mongoose.Schema({
   dispute_id: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "OfficialDispute",
-    // Not required — audio is uploaded before dispute context is known.
-    // dispute_id is filled in when the send_audio socket event fires.
     index: true
   },
   sender_id: {
@@ -16,7 +14,6 @@ const disputeMessageSchema = new mongoose.Schema({
   sender_role: {
     type: String,
     enum: ["creator", "joiner"],
-    // Not required — filled in when the send_audio socket event fires.
   },
   message_type: {
     type: String,

@@ -274,11 +274,10 @@ export const uploadAudio = async (req, res) => {
     }
 
     // Saved as a temporary audio record (not tied to a dispute yet).
-    // dispute_id, sender_role and duration are filled in when send_audio socket event fires.
+    // dispute_id and sender_role are intentionally omitted so Mongoose skips enum validation.
+    // They are filled in when the send_audio socket event fires.
     const message = await DisputeMessage.create({
-      dispute_id:  null,
-      sender_id:   req.user._id,
-      sender_role: null,
+      sender_id:    req.user._id,
       message_type: "audio",
       audio_data: {
         file_path:     mp3Path,
