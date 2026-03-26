@@ -22,19 +22,6 @@ const convertToMp3 = (inputPath, outputPath) =>
     });
   });
 
-export async function callGemini(prompt) {
-  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-  const model = genAI.getGenerativeModel({
-    model: "gemini-2.5-flash",
-    generationConfig: {
-      responseMimeType: "application/json",
-      temperature: 0
-    }
-  });
-  const result = await model.generateContent(prompt);
-  return result.response.text();
-}
-
 export const cleanAIResponse = (text) => {
   // 1. Try raw text first
   try { return JSON.parse(text); } catch (_) {}
@@ -71,6 +58,35 @@ export const cleanAIResponse = (text) => {
   console.error("[cleanAIResponse] All parse attempts failed. Raw response:", text);
   throw new Error("AI returned invalid JSON format");
 };
+
+export async function callGemini(prompt, retries = 3) {
+  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+  const model = genAI.getGenerativeModel({
+    model: "gemini-2.5-flash",
+    generationConfig: {
+      responseMimeType: "application/json",
+      temperature: 0
+    }
+  });
+
+  // Append a hard reminder to force pure JSON output
+  const strictPrompt = prompt + `\n\nCRITICAL: Your response MUST be valid JSON only. No markdown, no backticks, no explanation. Start with { and end with }. Nothing else.`;
+
+  let lastError;
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const result = await model.generateContent(strictPrompt);
+      const text = result.response.text();
+      cleanAIResponse(text); // validate before returning — throws if invalid
+      return text;
+    } catch (err) {
+      lastError = err;
+      console.warn(`[callGemini] attempt ${attempt}/${retries} returned invalid JSON — retrying...`);
+      await new Promise(r => setTimeout(r, 1000 * attempt));
+    }
+  }
+  throw new Error(`Gemini returned invalid JSON after ${retries} attempts: ${lastError?.message}`);
+}
 
 const generateCode = () => crypto.randomBytes(3).toString("hex").toUpperCase();
 
@@ -1442,7 +1458,7 @@ export const rejectSuggestedPlan = async (req, res) => {
 
     const isCreator = dispute.creator_id.toString() === req.user._id.toString();
 
-    dispute.suggested_plan_approval = { creator_approved: false, joiner_approved: false };
+    dispute.suggested_plan_approval = { creator_approved: false, joiner_approved: false, rejected_by: isCreator ? "creator" : "joiner" };
     dispute.status = "NEGOTIATION";
     await dispute.save();
 
@@ -2081,11 +2097,7 @@ export const getMyDisputeDetails = async (req, res) => {
 
     const dispute = await OfficialDispute.findById(dispute_id)
       .populate("creator_id", "firstName lastName email")
-      .populate("joiner_id", "firstName lastName email")
-      .populate({
-        path: "conversation.messages",
-        populate: { path: "sender_id", select: "firstName lastName email" }
-      });
+      .populate("joiner_id", "firstName lastName email");
 
     if (!dispute) return res.status(404).json({ message: "Dispute not found" });
 
@@ -2096,11 +2108,15 @@ export const getMyDisputeDetails = async (req, res) => {
       return res.status(403).json({ message: "You are not authorized to view this dispute" });
     }
 
+    // Convert to plain object and remove conversation messages
+    const disputeObj = dispute.toObject();
+    delete disputeObj.conversation.messages;
+
     res.json({
-      success:   true,
-      user_role: isCreator ? "creator" : "joiner",
+      success:    true,
+      user_role:  isCreator ? "creator" : "joiner",
       is_creator: isCreator,
-      dispute
+      dispute:    disputeObj
     });
   } catch (err) {
     console.error("Get dispute details error:", err);
