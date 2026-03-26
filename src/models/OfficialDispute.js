@@ -131,7 +131,8 @@ const officialDisputeSchema = new mongoose.Schema({
   },
   suggested_plan_approval: {
     creator_approved: { type: Boolean, default: false },
-    joiner_approved: { type: Boolean, default: false }
+    joiner_approved: { type: Boolean, default: false },
+    rejected_by: { type: String, enum: ["creator", "joiner"], default: null }
   },
 
   // Comment thread between both parties after solution selection.
