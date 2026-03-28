@@ -1135,13 +1135,16 @@ export const selectSolutions = async (req, res) => {
       return res.status(400).json({ message: `Invalid solution IDs: ${invalidSelections.join(", ")}` });
     }
 
-    const selectionField = isCreator
+    const selectionField   = isCreator
       ? "solution_selections.creator_selected"
       : "solution_selections.joiner_selected";
+    const confirmedField   = isCreator
+      ? "solution_selections.creator_confirmed"
+      : "solution_selections.joiner_confirmed";
 
     const updated = await OfficialDispute.findByIdAndUpdate(
       dispute_id,
-      { $set: { [selectionField]: selected_solution_ids } },
+      { $set: { [selectionField]: selected_solution_ids, [confirmedField]: true } },
       { new: true }
     );
 
@@ -1202,22 +1205,24 @@ export const selectSolutions = async (req, res) => {
       for (const s of allSockets) {
         const isCreatorSocket = s.userRole === "creator";
         s.emit("selection_update", {
-          selected_by: isCreator ? "creator" : "joiner",
-          has_creator_selected: creatorVotes.length > 0,
-          has_joiner_selected: joinerVotes.length > 0,
-          both_selected: false,
-          you_selected: isCreatorSocket ? creatorVotes.length > 0 : joinerVotes.length > 0,
-          other_selected: isCreatorSocket ? joinerVotes.length > 0 : creatorVotes.length > 0,
-          message: "Selection recorded. Waiting for other party.",
-          timestamp: new Date()
+          selected_by:          isCreator ? "creator" : "joiner",
+          creator_confirmed:    updated.solution_selections.creator_confirmed,
+          joiner_confirmed:     updated.solution_selections.joiner_confirmed,
+          both_selected:        false,
+          you_confirmed:        isCreatorSocket ? updated.solution_selections.creator_confirmed : updated.solution_selections.joiner_confirmed,
+          other_confirmed:      isCreatorSocket ? updated.solution_selections.joiner_confirmed  : updated.solution_selections.creator_confirmed,
+          message:              "Selection confirmed. Waiting for other party.",
+          timestamp:            new Date()
         });
       }
     }
 
     res.json({
-      success: true,
-      message: "Selection recorded. Waiting for other party.",
-      your_selections: selected_solution_ids,
+      success:           true,
+      message:           "Selection confirmed. Waiting for other party.",
+      your_selections:   selected_solution_ids,
+      creator_confirmed: updated.solution_selections.creator_confirmed,
+      joiner_confirmed:  updated.solution_selections.joiner_confirmed,
       waiting_for_other: true
     });
   } catch (err) {
@@ -2109,6 +2114,7 @@ export const getMyDisputeDetails = async (req, res) => {
     }
 
     // Convert to plain object and remove conversation messages
+    // (use GET /messages/:dispute_id for chat history)
     const disputeObj = dispute.toObject();
     delete disputeObj.conversation.messages;
 

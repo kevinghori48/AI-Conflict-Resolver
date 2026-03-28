@@ -715,13 +715,16 @@ OUTPUT JSON:
       }
 
       // Atomic update — avoids VersionError when both parties submit simultaneously
-      const selectionField = isCreator
+      const selectionField  = isCreator
         ? "solution_selections.creator_selected"
         : "solution_selections.joiner_selected";
+      const confirmedField  = isCreator
+        ? "solution_selections.creator_confirmed"
+        : "solution_selections.joiner_confirmed";
 
       const updated = await OfficialDispute.findByIdAndUpdate(
         roomId,
-        { $set: { [selectionField]: selected_solution_ids } },
+        { $set: { [selectionField]: selected_solution_ids, [confirmedField]: true } },
         { new: true }
       );
 
@@ -793,19 +796,19 @@ OUTPUT JSON:
       for (const s of allSockets) {
         const isCreatorSocket = s.userRole === "creator";
         s.emit("selection_update", {
-          selected_by: isCreator ? "creator" : "joiner",
-          has_creator_selected: creatorVotes.length > 0,
-          has_joiner_selected: joinerVotes.length > 0,
-          both_selected: false,
-          you_selected: isCreatorSocket ? creatorVotes.length > 0 : joinerVotes.length > 0,
-          other_selected: isCreatorSocket ? joinerVotes.length > 0 : creatorVotes.length > 0,
-          message: "Selection recorded. Waiting for other party.",
-          timestamp: new Date()
+          selected_by:     isCreator ? "creator" : "joiner",
+          creator_confirmed: updated.solution_selections.creator_confirmed,
+          joiner_confirmed:  updated.solution_selections.joiner_confirmed,
+          both_selected:   false,
+          you_confirmed:   isCreatorSocket ? updated.solution_selections.creator_confirmed : updated.solution_selections.joiner_confirmed,
+          other_confirmed: isCreatorSocket ? updated.solution_selections.joiner_confirmed  : updated.solution_selections.creator_confirmed,
+          message:         "Selection confirmed. Waiting for other party.",
+          timestamp:       new Date()
         });
       }
       console.log(`[EMIT] selection_update | to room: ${roomId} | creator: ${creatorVotes.length > 0} joiner: ${joinerVotes.length > 0}`);
 
-      if (callback) callback({ success: true, your_selections: selected_solution_ids, waiting_for_other: true });
+      if (callback) callback({ success: true, your_selections: selected_solution_ids, creator_confirmed: updated.solution_selections.creator_confirmed, joiner_confirmed: updated.solution_selections.joiner_confirmed, waiting_for_other: true });
     });
 
     // ─── ACCEPT SUGGESTED PLAN ────────────────────────────────────────────────

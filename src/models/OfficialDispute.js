@@ -109,7 +109,9 @@ const officialDisputeSchema = new mongoose.Schema({
 
   solution_selections: {
     creator_selected: [String],
-    joiner_selected: [String]
+    joiner_selected: [String],
+    creator_confirmed: { type: Boolean, default: false },
+    joiner_confirmed: { type: Boolean, default: false }
   },
 
   // AI-suggested plan after both select solutions; both can accept or start negotiation.
