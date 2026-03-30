@@ -223,7 +223,7 @@ export const joinDispute = async (req, res) => {
     const dispute = await OfficialDispute.findOne({
       invite_code: invite_code.toUpperCase(),
       status: "PRE_DISPUTE"
-    }).populate("creator_id", "firstName lastName email");
+    }).populate("creator_id", "firstName lastName email avatarId gender");
 
     if (!dispute) {
       return res.status(404).json({ message: "Invalid invite code or dispute already started" });
@@ -240,7 +240,7 @@ export const joinDispute = async (req, res) => {
     dispute.joiner_id = req.user._id;
     dispute.status = "CONVERSATION";
     await dispute.save();
-    await dispute.populate("joiner_id", "firstName lastName email");
+    await dispute.populate("joiner_id", "firstName lastName email avatarId gender");
 
     // FIX: was using undefined 'dispute_id' variable — use dispute._id.toString()
     if (req.app.get('io')) {
@@ -386,7 +386,7 @@ export const sendAudioMessage = async (req, res) => {
     dispute.conversation.messages.push(message._id);
     dispute.conversation.audio_count[senderRole] = currentCount + 1;
     await dispute.save();
-    await message.populate("sender_id", "firstName lastName email");
+    await message.populate("sender_id", "firstName lastName email avatarId gender");
 
     const audioUrl = `${req.protocol}://${req.get("host")}/official-dispute/message/audio/${message._id}`;
 
@@ -498,7 +498,7 @@ export const getConversationMessages = async (req, res) => {
 
     // FIX: was calling .reverse() twice — that cancelled out the sort. Now only called once.
     const messages = await DisputeMessage.find(query)
-      .populate("sender_id", "firstName lastName email")
+      .populate("sender_id", "firstName lastName email avatarId gender")
       .sort({ timestamp: -1 })
       .limit(parseInt(limit));
 
@@ -589,7 +589,7 @@ export async function generateAISummary(dispute, dispute_id, io) {
   try {
     console.log(`[generateAISummary] START | dispute: ${dispute._id}`);
     const messages = await DisputeMessage.find({ dispute_id: dispute._id.toString() })
-      .populate("sender_id", "firstName lastName email")
+      .populate("sender_id", "firstName lastName email avatarId gender")
       .sort({ timestamp: 1 });
 
     console.log(`[generateAISummary] Found ${messages.length} messages for dispute ${dispute._id}`);
@@ -715,7 +715,7 @@ export const reportSummary = async (req, res) => {
 
     try {
       const messages = await DisputeMessage.find({ dispute_id })
-        .populate("sender_id", "firstName lastName email")
+        .populate("sender_id", "firstName lastName email avatarId gender")
         .sort({ timestamp: 1 });
 
       let transcript = "";
@@ -1566,7 +1566,7 @@ export const getNegotiationComments = async (req, res) => {
     const { dispute_id } = req.params;
 
     const dispute = await OfficialDispute.findById(dispute_id)
-      .populate("negotiation.comments.sender_id", "firstName lastName email");
+      .populate("negotiation.comments.sender_id", "firstName lastName email avatarId gender");
 
     if (!dispute) return res.status(404).json({ message: "Dispute not found" });
 
@@ -1998,11 +1998,11 @@ export const getDisputeStatus = async (req, res) => {
     const { dispute_id } = req.params;
 
     const dispute = await OfficialDispute.findById(dispute_id)
-      .populate("creator_id", "firstName lastName email")
-      .populate("joiner_id", "firstName lastName email")
+      .populate("creator_id", "firstName lastName email avatarId gender")
+      .populate("joiner_id", "firstName lastName email avatarId gender")
       .populate({
         path: "conversation.messages",
-        populate: { path: "sender_id", select: "firstName lastName email" }
+        populate: { path: "sender_id", select: "firstName lastName email avatarId gender" }
       });
 
     if (!dispute) return res.status(404).json({ message: "Dispute not found" });
@@ -2054,8 +2054,8 @@ export const getUserDisputes = async (req, res) => {
 
     const [disputes, total] = await Promise.all([
       OfficialDispute.find(query)
-        .populate("creator_id", "firstName lastName email")
-        .populate("joiner_id", "firstName lastName email")
+        .populate("creator_id", "firstName lastName email avatarId gender")
+        .populate("joiner_id", "firstName lastName email avatarId gender")
         .select("_id dispute_name status invite_code intake_data.relationship_type ai_summary.main_topic creator_id joiner_id createdAt updatedAt")
         .sort({ updatedAt: -1 })
         .skip(skip)
@@ -2101,8 +2101,8 @@ export const getMyDisputeDetails = async (req, res) => {
     const { dispute_id } = req.params;
 
     const dispute = await OfficialDispute.findById(dispute_id)
-      .populate("creator_id", "firstName lastName email")
-      .populate("joiner_id", "firstName lastName email");
+      .populate("creator_id", "firstName lastName email avatarId gender")
+      .populate("joiner_id", "firstName lastName email avatarId gender");
 
     if (!dispute) return res.status(404).json({ message: "Dispute not found" });
 

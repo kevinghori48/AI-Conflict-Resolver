@@ -15,7 +15,7 @@ export const setupDisputeSocket = (io) => {
       if (token) {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         socket.userId = decoded._id;
-        socket.user = await User.findById(decoded._id).select('firstName lastName email');
+        socket.user = await User.findById(decoded._id).select('firstName lastName email avatarId gender');
         if (socket.user) {
           socket.authenticated = true;
           console.log(`Socket authenticated: ${socket.user.email}`);
@@ -72,8 +72,8 @@ export const setupDisputeSocket = (io) => {
       }
 
       const dispute = await disputeQuery
-        .populate("creator_id", "firstName lastName email")
-        .populate("joiner_id", "firstName lastName email");
+        .populate("creator_id", "firstName lastName email avatarId gender")
+        .populate("joiner_id", "firstName lastName email avatarId gender");
 
       if (!dispute) {
         socket.emit("error", { message: "Dispute not found" });
@@ -114,6 +114,14 @@ export const setupDisputeSocket = (io) => {
           joiner_id: socket.userId,
           joiner_name: `${socket.user.firstName} ${socket.user.lastName}`,
           joiner_email: socket.user.email,
+          joiner_user: {
+            _id:       socket.userId,
+            firstName: socket.user.firstName,
+            lastName:  socket.user.lastName,
+            email:     socket.user.email,
+            avatarId:  socket.user.avatarId ?? null,
+            gender:    socket.user.gender   ?? null
+          },
           status: dispute.status,
           dispute_name: dispute.dispute_name,
           message: `${socket.user.firstName} has joined the dispute. You can start the conversation.`,
@@ -123,9 +131,17 @@ export const setupDisputeSocket = (io) => {
       }
 
       socket.to(roomId).emit("user_online", {
-        user_id: socket.userId,
+        user_id:   socket.userId,
         user_role: socket.userRole,
         user_name: `${socket.user.firstName} ${socket.user.lastName}`,
+        user: {
+          _id:       socket.userId,
+          firstName: socket.user.firstName,
+          lastName:  socket.user.lastName,
+          email:     socket.user.email,
+          avatarId:  socket.user.avatarId ?? null,
+          gender:    socket.user.gender   ?? null
+        },
         timestamp: new Date()
       });
       console.log(`[EMIT] user_online | to room: ${roomId} | user: ${socket.user.email}`);
@@ -236,7 +252,7 @@ export const setupDisputeSocket = (io) => {
 
         dispute.conversation.messages.push(message._id);
         await dispute.save();
-        await message.populate('sender_id', 'firstName lastName email');
+        await message.populate('sender_id', 'firstName lastName email avatarId gender');
 
         if (callback) callback({ success: true, message, timestamp: new Date() });
 
@@ -325,7 +341,7 @@ export const setupDisputeSocket = (io) => {
         dispute.conversation.messages.push(message._id);
         dispute.conversation.audio_count[senderRole] = currentCount + 1;
         await dispute.save();
-        await message.populate('sender_id', 'firstName lastName email');
+        await message.populate('sender_id', 'firstName lastName email avatarId gender');
 
         const audioUrl = `${process.env.SERVER_URL}/official-dispute/message/audio/${message._id}`;
 
@@ -554,7 +570,7 @@ export const setupDisputeSocket = (io) => {
       const disputeIdString = roomId;
       try {
         const messages = await DisputeMessage.find({ dispute_id: disputeIdString })
-          .populate("sender_id", "firstName lastName email")
+          .populate("sender_id", "firstName lastName email avatarId gender")
           .sort({ timestamp: 1 });
 
         let transcript = "";
@@ -938,7 +954,7 @@ OUTPUT JSON:
 
       const role = isCreator ? "creator" : "joiner";
 
-      dispute.suggested_plan_approval = { creator_approved: false, joiner_approved: false };
+      dispute.suggested_plan_approval = { creator_approved: false, joiner_approved: false, rejected_by: isCreator ? "creator" : "joiner" };
       dispute.status = "NEGOTIATION";
       await dispute.save();
       console.log(`[reject_suggested_plan] [SAVE] status → NEGOTIATION | rejected by: ${role} | dispute: ${roomId}`);
@@ -1183,7 +1199,7 @@ OUTPUT JSON:
       }
 
       const dispute = await OfficialDispute.findById(roomId)
-        .populate("negotiation.comments.sender_id", "firstName lastName email");
+        .populate("negotiation.comments.sender_id", "firstName lastName email avatarId gender");
       if (!dispute) {
         if (callback) callback({ success: false, message: "Dispute not found" });
         return;
@@ -1646,6 +1662,14 @@ OUTPUT JSON:
         sender_id:   socket.userId,
         sender_role: senderRole,
         sender_name: `${socket.user.firstName} ${socket.user.lastName}`,
+        sender_user: {
+          _id:       socket.userId,
+          firstName: socket.user.firstName,
+          lastName:  socket.user.lastName,
+          email:     socket.user.email,
+          avatarId:  socket.user.avatarId ?? null,
+          gender:    socket.user.gender   ?? null
+        },
         text:        saved.text,
         timestamp:   saved.timestamp,
         creator_ready: false,
@@ -1671,6 +1695,14 @@ OUTPUT JSON:
         user_id:   socket.userId,
         user_role: socket.userRole,
         user_name: `${socket.user.firstName} ${socket.user.lastName}`,
+        user: {
+          _id:       socket.userId,
+          firstName: socket.user.firstName,
+          lastName:  socket.user.lastName,
+          email:     socket.user.email,
+          avatarId:  socket.user.avatarId ?? null,
+          gender:    socket.user.gender   ?? null
+        },
         timestamp: new Date()
       });
       console.log(`[EMIT] negotiation_user_typing | room: ${roomId} | user: ${socket.user.email}`);
@@ -1894,6 +1926,14 @@ OUTPUT JSON:
         user_id: socket.userId,
         user_role: socket.userRole,
         user_name: `${socket.user.firstName} ${socket.user.lastName}`,
+        user: {
+          _id:       socket.userId,
+          firstName: socket.user.firstName,
+          lastName:  socket.user.lastName,
+          email:     socket.user.email,
+          avatarId:  socket.user.avatarId ?? null,
+          gender:    socket.user.gender   ?? null
+        },
         timestamp: new Date()
       });
       console.log(`[EMIT] user_typing | to room: ${dispute_id} | user: ${socket.user.email}`);
@@ -1927,6 +1967,14 @@ OUTPUT JSON:
         user_id: socket.userId,
         user_role: socket.userRole,
         user_name: `${socket.user.firstName} ${socket.user.lastName}`,
+        user: {
+          _id:       socket.userId,
+          firstName: socket.user.firstName,
+          lastName:  socket.user.lastName,
+          email:     socket.user.email,
+          avatarId:  socket.user.avatarId ?? null,
+          gender:    socket.user.gender   ?? null
+        },
         timestamp: new Date()
       });
       console.log(`[EMIT] user_recording_audio | to room: ${dispute_id} | user: ${socket.user.email}`);
@@ -1948,6 +1996,14 @@ OUTPUT JSON:
         user_id: socket.userId,
         user_role: socket.userRole,
         user_name: `${socket.user.firstName} ${socket.user.lastName}`,
+        user: {
+          _id:       socket.userId,
+          firstName: socket.user.firstName,
+          lastName:  socket.user.lastName,
+          email:     socket.user.email,
+          avatarId:  socket.user.avatarId ?? null,
+          gender:    socket.user.gender   ?? null
+        },
         timestamp: new Date()
       });
       console.log(`[EMIT] user_left | to room: ${dispute_id} | user: ${socket.user.email}`);
@@ -1963,6 +2019,14 @@ OUTPUT JSON:
           user_id: socket.userId,
           user_role: socket.userRole,
           user_name: socket.user ? `${socket.user.firstName} ${socket.user.lastName}` : "Unknown",
+          user: socket.user ? {
+            _id:       socket.userId,
+            firstName: socket.user.firstName,
+            lastName:  socket.user.lastName,
+            email:     socket.user.email,
+            avatarId:  socket.user.avatarId ?? null,
+            gender:    socket.user.gender   ?? null
+          } : null,
           reason,
           timestamp: new Date()
         });
