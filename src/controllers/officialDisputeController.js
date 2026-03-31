@@ -2039,12 +2039,91 @@ export const getUserDisputes = async (req, res) => {
       limit = 10
     } = req.query;
 
-    // type is mandatory
-    if (!type) {
-      return res.status(400).json({ message: "type is required. Must be one of: major, minor, call" });
-    }
-    if (!["major", "minor", "call"].includes(type)) {
+    // If type is provided, validate it
+    if (type && !["major", "minor", "call"].includes(type)) {
       return res.status(400).json({ message: "Invalid type. Must be one of: major, minor, call" });
+    }
+
+    // No type provided — return all disputes from all 3 collections combined
+    if (!type) {
+      const majorQuery = { $or: [{ creator_id: req.user._id }, { joiner_id: req.user._id }] };
+      const minorQuery = { $or: [{ creator_id: req.user._id }, { joiner_id: req.user._id }] };
+      const callQuery  = { user_id: req.user._id };
+
+      if (startDate) {
+        const from = new Date(startDate);
+        if (!isNaN(from)) {
+          majorQuery.createdAt = { $gte: from };
+          minorQuery.createdAt = { $gte: from };
+          callQuery.createdAt  = { $gte: from };
+        }
+      }
+
+      const [majorDisputes, minorDisputes, callReports] = await Promise.all([
+        OfficialDispute.find(majorQuery)
+          .populate("creator_id", "firstName lastName email avatarId gender")
+          .populate("joiner_id", "firstName lastName email avatarId gender")
+          .select("_id dispute_name status invite_code intake_data.relationship_type ai_summary.main_topic creator_id joiner_id createdAt updatedAt")
+          .sort({ updatedAt: -1 }),
+        SmallDispute.find(minorQuery)
+          .populate("creator_id", "firstName lastName email avatarId gender")
+          .populate("joiner_id", "firstName lastName email avatarId gender")
+          .sort({ createdAt: -1 }),
+        Report.find(callQuery)
+          .sort({ createdAt: -1 })
+      ]);
+
+      const allDisputes = [
+        ...majorDisputes.map(d => ({
+          _id:               d._id,
+          type:              "major",
+          dispute_name:      d.dispute_name,
+          status:            d.status,
+          invite_code:       d.invite_code,
+          relationship_type: d.intake_data?.relationship_type,
+          main_topic:        d.ai_summary?.main_topic || null,
+          creator:           d.creator_id,
+          joiner:            d.joiner_id,
+          createdAt:         d.createdAt,
+          updatedAt:         d.updatedAt
+        })),
+        ...minorDisputes.map(d => ({
+          _id:         d._id,
+          type:        "minor",
+          status:      d.status,
+          invite_code: d.invite_code,
+          creator:     d.creator_id,
+          joiner:      d.joiner_id,
+          result:      d.result || null,
+          createdAt:   d.createdAt
+        })),
+        ...callReports.map(r => ({
+          _id:               r._id,
+          type:              "call",
+          title:             r.title,
+          conversation_type: r.conversation_type,
+          conflict_score:    r.conflict_score,
+          objective:         r.objective,
+          createdAt:         r.createdAt
+        }))
+      ].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+      // Apply pagination on combined results
+      const total      = allDisputes.length;
+      const totalPages = Math.ceil(total / limitNum);
+      const paginated  = allDisputes.slice(skip, skip + limitNum);
+
+      return res.json({
+        success:     true,
+        type:        "all",
+        count:       paginated.length,
+        total,
+        page:        pageNum,
+        total_pages: totalPages,
+        has_next:    pageNum < totalPages,
+        has_prev:    pageNum > 1,
+        disputes:    paginated
+      });
     }
 
     const pageNum  = Math.max(1, parseInt(page));
