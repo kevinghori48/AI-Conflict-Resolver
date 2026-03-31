@@ -1,5 +1,7 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import OfficialDispute from "../models/OfficialDispute.js";
+import SmallDispute from "../models/SmallDispute.js";
+import Report from "../models/Report.js";
 import DisputeMessage from "../models/DisputeMessage.js";
 import crypto from "crypto";
 import fs from "fs";
@@ -2030,65 +2032,161 @@ export const getDisputeStatus = async (req, res) => {
 export const getUserDisputes = async (req, res) => {
   try {
     const {
+      type,
       status,
-      search,
+      startDate,
       page  = 1,
       limit = 10
     } = req.query;
 
-    const pageNum  = Math.max(1, parseInt(page));
-    const limitNum = Math.min(50, Math.max(1, parseInt(limit))); // hard cap at 50
-    const skip     = (pageNum - 1) * limitNum;
-
-    const query = {
-      $or: [{ creator_id: req.user._id }, { joiner_id: req.user._id }]
-    };
-
-    // Filter by status
-    if (status) query.status = status;
-
-    // Search by dispute name (case-insensitive)
-    if (search && search.trim()) {
-      query.dispute_name = { $regex: search.trim(), $options: "i" };
+    // type is mandatory
+    if (!type) {
+      return res.status(400).json({ message: "type is required. Must be one of: major, minor, call" });
+    }
+    if (!["major", "minor", "call"].includes(type)) {
+      return res.status(400).json({ message: "Invalid type. Must be one of: major, minor, call" });
     }
 
-    const [disputes, total] = await Promise.all([
-      OfficialDispute.find(query)
-        .populate("creator_id", "firstName lastName email avatarId gender")
-        .populate("joiner_id", "firstName lastName email avatarId gender")
-        .select("_id dispute_name status invite_code intake_data.relationship_type ai_summary.main_topic creator_id joiner_id createdAt updatedAt")
-        .sort({ updatedAt: -1 })
-        .skip(skip)
-        .limit(limitNum),
-      OfficialDispute.countDocuments(query)
-    ]);
+    const pageNum  = Math.max(1, parseInt(page));
+    const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
+    const skip     = (pageNum - 1) * limitNum;
 
-    const totalPages = Math.ceil(total / limitNum);
+    // ── MAJOR (OfficialDispute) ───────────────────────────────────────────────
+    if (type === "major") {
+      const query = {
+        $or: [{ creator_id: req.user._id }, { joiner_id: req.user._id }]
+      };
 
-    // Return limited fields + main topic of AI summary for history card
-    const disputeList = disputes.map(d => ({
-      _id:               d._id,
-      dispute_name:      d.dispute_name,
-      status:            d.status,
-      invite_code:       d.invite_code,
-      relationship_type: d.intake_data?.relationship_type,
-      main_topic:        d.ai_summary?.main_topic || null,
-      creator:           d.creator_id,
-      joiner:            d.joiner_id,
-      createdAt:         d.createdAt,
-      updatedAt:         d.updatedAt
-    }));
+      if (status) query.status = status;
 
-    res.json({
-      success:      true,
-      count:        disputes.length,
-      total,
-      page:         pageNum,
-      total_pages:  totalPages,
-      has_next:     pageNum < totalPages,
-      has_prev:     pageNum > 1,
-      disputes:     disputeList
-    });
+      if (startDate) {
+        const from = new Date(startDate);
+        if (!isNaN(from)) query.createdAt = { $gte: from };
+      }
+
+      const [disputes, total] = await Promise.all([
+        OfficialDispute.find(query)
+          .populate("creator_id", "firstName lastName email avatarId gender")
+          .populate("joiner_id", "firstName lastName email avatarId gender")
+          .select("_id dispute_name status invite_code intake_data.relationship_type ai_summary.main_topic creator_id joiner_id createdAt updatedAt")
+          .sort({ updatedAt: -1 })
+          .skip(skip)
+          .limit(limitNum),
+        OfficialDispute.countDocuments(query)
+      ]);
+
+      const totalPages = Math.ceil(total / limitNum);
+
+      return res.json({
+        success:     true,
+        type:        "major",
+        count:       disputes.length,
+        total,
+        page:        pageNum,
+        total_pages: totalPages,
+        has_next:    pageNum < totalPages,
+        has_prev:    pageNum > 1,
+        disputes:    disputes.map(d => ({
+          _id:               d._id,
+          type:              "major",
+          dispute_name:      d.dispute_name,
+          status:            d.status,
+          invite_code:       d.invite_code,
+          relationship_type: d.intake_data?.relationship_type,
+          main_topic:        d.ai_summary?.main_topic || null,
+          creator:           d.creator_id,
+          joiner:            d.joiner_id,
+          createdAt:         d.createdAt,
+          updatedAt:         d.updatedAt
+        }))
+      });
+    }
+
+    // ── MINOR (SmallDispute) ──────────────────────────────────────────────────
+    if (type === "minor") {
+      const query = {
+        $or: [{ creator_id: req.user._id }, { joiner_id: req.user._id }]
+      };
+
+      if (startDate) {
+        const from = new Date(startDate);
+        if (!isNaN(from)) query.createdAt = { $gte: from };
+      }
+
+      const [disputes, total] = await Promise.all([
+        SmallDispute.find(query)
+          .populate("creator_id", "firstName lastName email avatarId gender")
+          .populate("joiner_id", "firstName lastName email avatarId gender")
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limitNum),
+        SmallDispute.countDocuments(query)
+      ]);
+
+      const totalPages = Math.ceil(total / limitNum);
+
+      return res.json({
+        success:     true,
+        type:        "minor",
+        count:       disputes.length,
+        total,
+        page:        pageNum,
+        total_pages: totalPages,
+        has_next:    pageNum < totalPages,
+        has_prev:    pageNum > 1,
+        disputes:    disputes.map(d => ({
+          _id:         d._id,
+          type:        "minor",
+          status:      d.status,
+          invite_code: d.invite_code,
+          creator:     d.creator_id,
+          joiner:      d.joiner_id,
+          result:      d.result || null,
+          createdAt:   d.createdAt
+        }))
+      });
+    }
+
+    // ── CALL (Report) ─────────────────────────────────────────────────────────
+    if (type === "call") {
+      const query = { user_id: req.user._id };
+
+      if (startDate) {
+        const from = new Date(startDate);
+        if (!isNaN(from)) query.createdAt = { $gte: from };
+      }
+
+      const [reports, total] = await Promise.all([
+        Report.find(query)
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limitNum),
+        Report.countDocuments(query)
+      ]);
+
+      const totalPages = Math.ceil(total / limitNum);
+
+      return res.json({
+        success:     true,
+        type:        "call",
+        count:       reports.length,
+        total,
+        page:        pageNum,
+        total_pages: totalPages,
+        has_next:    pageNum < totalPages,
+        has_prev:    pageNum > 1,
+        disputes:    reports.map(r => ({
+          _id:               r._id,
+          type:              "call",
+          title:             r.title,
+          conversation_type: r.conversation_type,
+          conflict_score:    r.conflict_score,
+          objective:         r.objective,
+          createdAt:         r.createdAt
+        }))
+      });
+    }
+
   } catch (err) {
     console.error("Get user disputes error:", err);
     res.status(500).json({ message: "Failed to fetch disputes", error: err.message });
