@@ -122,6 +122,14 @@ export const setupDisputeSocket = (io) => {
             avatarId:  socket.user.avatarId ?? null,
             gender:    socket.user.gender   ?? null
           },
+          creator_user: {
+            _id:       dispute.creator_id._id,
+            firstName: dispute.creator_id.firstName,
+            lastName:  dispute.creator_id.lastName,
+            email:     dispute.creator_id.email,
+            avatarId:  dispute.creator_id.avatarId ?? null,
+            gender:    dispute.creator_id.gender   ?? null
+          },
           status: dispute.status,
           dispute_name: dispute.dispute_name,
           message: `${socket.user.firstName} has joined the dispute. You can start the conversation.`,

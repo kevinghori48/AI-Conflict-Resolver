@@ -39,7 +39,7 @@ const CREATOR = { email: "testcreator@test.com", firstName: "Test",   lastName: 
 const JOINER  = { email: "testjoiner@test.com",  firstName: "Test",   lastName: "Joiner"  };
 
 // Set to "A" to test accept path, "B" to test full negotiation path
-const TEST_PATH = "A";
+const TEST_PATH = "B";
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 let passed = 0;
@@ -392,10 +392,66 @@ async function step11b_negotiationPath() {
 async function step12_generalEndpoints() {
   log("STEP 12 — General Endpoints");
 
+  // ── my-disputes filters ────────────────────────────────────────────────────
+
+  // No filter — returns all types combined
   try {
     const r = await api(creatorToken).get(`${API}/my-disputes`);
-    ok("Get my disputes (list)", { count: r.data.count });
-  } catch (e) { fail("Get my disputes", e); }
+    ok("Get my disputes — no filter (all types)", { type: r.data.type, count: r.data.count, total: r.data.total });
+  } catch (e) { fail("Get my disputes — no filter", e); }
+
+  // type=major only
+  try {
+    const r = await api(creatorToken).get(`${API}/my-disputes?type=major`);
+    ok("Get my disputes — type=major", { type: r.data.type, count: r.data.count });
+  } catch (e) { fail("Get my disputes — type=major", e); }
+
+  // type=major + status=COMPLETED
+  try {
+    const r = await api(creatorToken).get(`${API}/my-disputes?type=major&status=COMPLETED`);
+    ok("Get my disputes — type=major&status=COMPLETED", { count: r.data.count });
+  } catch (e) { fail("Get my disputes — type=major&status=COMPLETED", e); }
+
+  // type=major + startDate
+  try {
+    const r = await api(creatorToken).get(`${API}/my-disputes?type=major&startDate=2026-01-01`);
+    ok("Get my disputes — type=major&startDate=2026-01-01", { count: r.data.count });
+  } catch (e) { fail("Get my disputes — type=major&startDate=2026-01-01", e); }
+
+  // type=major + status + startDate
+  try {
+    const r = await api(creatorToken).get(`${API}/my-disputes?type=major&status=COMPLETED&startDate=2026-01-01`);
+    ok("Get my disputes — type=major&status=COMPLETED&startDate", { count: r.data.count });
+  } catch (e) { fail("Get my disputes — type=major&status=COMPLETED&startDate", e); }
+
+  // type=minor
+  try {
+    const r = await api(creatorToken).get(`${API}/my-disputes?type=minor`);
+    ok("Get my disputes — type=minor", { type: r.data.type, count: r.data.count });
+  } catch (e) { fail("Get my disputes — type=minor", e); }
+
+  // type=call
+  try {
+    const r = await api(creatorToken).get(`${API}/my-disputes?type=call`);
+    ok("Get my disputes — type=call", { type: r.data.type, count: r.data.count });
+  } catch (e) { fail("Get my disputes — type=call", e); }
+
+  // invalid type — should return 400
+  try {
+    await api(creatorToken).get(`${API}/my-disputes?type=invalid`);
+    fail("Get my disputes — invalid type should return 400", "Expected 400 but got 200");
+  } catch (e) {
+    if (e?.response?.status === 400) ok("Get my disputes — invalid type returns 400", { message: e.response.data.message });
+    else fail("Get my disputes — invalid type", e);
+  }
+
+  // pagination
+  try {
+    const r = await api(creatorToken).get(`${API}/my-disputes?type=major&page=1&limit=5`);
+    ok("Get my disputes — pagination", { page: r.data.page, total_pages: r.data.total_pages, has_next: r.data.has_next });
+  } catch (e) { fail("Get my disputes — pagination", e); }
+
+  // ── other endpoints ────────────────────────────────────────────────────────
 
   try {
     const r = await api(creatorToken).get(`${API}/my-disputes/${disputeId}`);
@@ -446,7 +502,7 @@ async function main() {
     await step9_approveSummary();
     await step10_selectSolutions();
 
-    if (TEST_PATH === "B") {
+    if (TEST_PATH === "A") {
       await step11a_acceptPlan();
     } else {
       await step11b_negotiationPath();
