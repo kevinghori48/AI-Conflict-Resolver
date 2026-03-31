@@ -2044,6 +2044,10 @@ export const getUserDisputes = async (req, res) => {
       return res.status(400).json({ message: "Invalid type. Must be one of: major, minor, call" });
     }
 
+    const pageNum  = Math.max(1, parseInt(page));
+    const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
+    const skip     = (pageNum - 1) * limitNum;
+
     // No type provided — return all disputes from all 3 collections combined
     if (!type) {
       const majorQuery = { $or: [{ creator_id: req.user._id }, { joiner_id: req.user._id }] };
@@ -2125,10 +2129,6 @@ export const getUserDisputes = async (req, res) => {
         disputes:    paginated
       });
     }
-
-    const pageNum  = Math.max(1, parseInt(page));
-    const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
-    const skip     = (pageNum - 1) * limitNum;
 
     // ── MAJOR (OfficialDispute) ───────────────────────────────────────────────
     if (type === "major") {
