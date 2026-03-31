@@ -39,7 +39,7 @@ const CREATOR = { email: "testcreator@test.com", firstName: "Test",   lastName: 
 const JOINER  = { email: "testjoiner@test.com",  firstName: "Test",   lastName: "Joiner"  };
 
 // Set to "A" to test accept path, "B" to test full negotiation path
-const TEST_PATH = "B";
+const TEST_PATH = "A";
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 let passed = 0;
