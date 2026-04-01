@@ -2112,7 +2112,6 @@ export const getUserDisputes = async (req, res) => {
         }))
       ].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
-      // Apply pagination on combined results
       const total      = allDisputes.length;
       const totalPages = Math.ceil(total / limitNum);
       const paginated  = allDisputes.slice(skip, skip + limitNum);
