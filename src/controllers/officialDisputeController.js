@@ -2112,6 +2112,7 @@ export const getUserDisputes = async (req, res) => {
         }))
       ].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
+      // Apply pagination on combined results
       const total      = allDisputes.length;
       const totalPages = Math.ceil(total / limitNum);
       const paginated  = allDisputes.slice(skip, skip + limitNum);
@@ -2272,34 +2273,75 @@ export const getUserDisputes = async (req, res) => {
 };
 
 // DETAIL PAGE: Full dispute info for a single dispute
+// Checks all 3 collections — major (OfficialDispute), minor (SmallDispute), call (Report)
 export const getMyDisputeDetails = async (req, res) => {
   try {
     const { dispute_id } = req.params;
 
-    const dispute = await OfficialDispute.findById(dispute_id)
+    // ── MAJOR (OfficialDispute) ───────────────────────────────────────────────
+    const major = await OfficialDispute.findById(dispute_id)
       .populate("creator_id", "firstName lastName email avatarId gender")
       .populate("joiner_id", "firstName lastName email avatarId gender");
 
-    if (!dispute) return res.status(404).json({ message: "Dispute not found" });
+    if (major) {
+      const isCreator = major.creator_id._id.toString() === req.user._id.toString();
+      const isJoiner  = major.joiner_id?._id.toString()  === req.user._id.toString();
 
-    const isCreator = dispute.creator_id._id.toString() === req.user._id.toString();
-    const isJoiner  = dispute.joiner_id?._id.toString()  === req.user._id.toString();
+      if (!isCreator && !isJoiner) {
+        return res.status(403).json({ message: "You are not authorized to view this dispute" });
+      }
 
-    if (!isCreator && !isJoiner) {
-      return res.status(403).json({ message: "You are not authorized to view this dispute" });
+      const disputeObj = major.toObject();
+      delete disputeObj.conversation.messages;
+
+      return res.json({
+        success:    true,
+        type:       "major",
+        user_role:  isCreator ? "creator" : "joiner",
+        is_creator: isCreator,
+        dispute:    disputeObj
+      });
     }
 
-    // Convert to plain object and remove conversation messages
-    // (use GET /messages/:dispute_id for chat history)
-    const disputeObj = dispute.toObject();
-    delete disputeObj.conversation.messages;
+    // ── MINOR (SmallDispute) ──────────────────────────────────────────────────
+    const minor = await SmallDispute.findById(dispute_id)
+      .populate("creator_id", "firstName lastName email avatarId gender")
+      .populate("joiner_id", "firstName lastName email avatarId gender");
 
-    res.json({
-      success:    true,
-      user_role:  isCreator ? "creator" : "joiner",
-      is_creator: isCreator,
-      dispute:    disputeObj
-    });
+    if (minor) {
+      const isCreator = minor.creator_id._id.toString() === req.user._id.toString();
+      const isJoiner  = minor.joiner_id?._id.toString()  === req.user._id.toString();
+
+      if (!isCreator && !isJoiner) {
+        return res.status(403).json({ message: "You are not authorized to view this dispute" });
+      }
+
+      return res.json({
+        success:    true,
+        type:       "minor",
+        user_role:  isCreator ? "creator" : "joiner",
+        is_creator: isCreator,
+        dispute:    minor
+      });
+    }
+
+    // ── CALL (Report) ─────────────────────────────────────────────────────────
+    const report = await Report.findById(dispute_id);
+
+    if (report) {
+      if (report.user_id.toString() !== req.user._id.toString()) {
+        return res.status(403).json({ message: "You are not authorized to view this report" });
+      }
+
+      return res.json({
+        success: true,
+        type:    "call",
+        dispute: report
+      });
+    }
+
+    return res.status(404).json({ message: "Dispute not found" });
+
   } catch (err) {
     console.error("Get dispute details error:", err);
     res.status(500).json({ message: "Failed to fetch dispute details", error: err.message });
