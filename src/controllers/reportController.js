@@ -11,7 +11,8 @@ const getGeminiModel = () => {
     model: "gemini-2.5-flash",
     generationConfig: {
       responseMimeType: "application/json",
-      maxOutputTokens: 2048
+      maxOutputTokens: 8192,
+      temperature: 0
     }
   });
 };
