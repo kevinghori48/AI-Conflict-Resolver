@@ -9,7 +9,10 @@ const getGeminiModel = () => {
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
   return genAI.getGenerativeModel({
     model: "gemini-2.5-flash",
-    generationConfig: { responseMimeType: "application/json" } // Force JSON
+    generationConfig: {
+      responseMimeType: "application/json",
+      maxOutputTokens: 2048
+    }
   });
 };
 
@@ -28,7 +31,6 @@ const generateAnalysis = async (audioFiles, conversationType, objective) => {
 
   // 1. Attach ALL Audio Files
   for (const file of audioFiles) {
-    // Read file from disk
     if (fs.existsSync(file.file_path)) {
       const base64Data = (await fs.promises.readFile(file.file_path)).toString("base64");
       parts.push({
@@ -80,7 +82,11 @@ const generateAnalysis = async (audioFiles, conversationType, objective) => {
     contents: [{ role: "user", parts: parts }]
   });
 
-  return JSON.parse(result.response.text());
+  // 4. Clean response and parse JSON
+  // Gemini sometimes wraps response in ```json ... ``` markdown fences
+  const raw = result.response.text();
+  const cleaned = raw.replace(/```json|```/g, "").trim();
+  return JSON.parse(cleaned);
 };
 
 // 1. CREATE NEW REPORT (Multiple Audios)
@@ -130,7 +136,6 @@ export const createReport = async (req, res) => {
       conversation_type: normalizedType,
       objective,
       title: `${normalizedType} Analysis`,
-      // Mapping Gemini JSON to our Schema
       conflict_score: analysis.conflict_score,
       emotional_intensity: analysis.emotional_intensity,
       summary_points: analysis.summary_points,
@@ -173,7 +178,7 @@ export const appendAudio = async (req, res) => {
     // report.audio_ids is an array of full objects because of .populate()
     const allAudioDocs = [...report.audio_ids, newAudio];
 
-    // D. Re-Analyze EVERYTHING (The "Combined Report" feature)
+    // D. Re-Analyze EVERYTHING
     console.log(`Re-Analyzing ${allAudioDocs.length} files...`);
     const analysis = await generateAnalysis(allAudioDocs, report.conversation_type, report.objective);
 
