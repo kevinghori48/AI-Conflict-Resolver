@@ -680,19 +680,14 @@ export const reportSummary = async (req, res) => {
     const { dispute_id, feedback } = req.body;
 
     if (!feedback || feedback.trim() === "") {
-      return res.status(400).json({ message: "Please provide feedback about what's wrong with the summary" });
+      return res.status(400).json({ message: "Please provide feedback about the summary" });
     }
 
     const dispute = await OfficialDispute.findById(dispute_id);
     if (!dispute) return res.status(404).json({ message: "Dispute not found" });
 
-    // FIX: status guard was missing in original
     if (dispute.status !== "SUMMARY_REVIEW") {
       return res.status(400).json({ message: "Summary is not currently under review" });
-    }
-
-    if (!dispute.ai_summary || !dispute.ai_summary.summary_text) {
-      return res.status(400).json({ message: "No summary exists to regenerate" });
     }
 
     const isParticipant =
@@ -703,107 +698,31 @@ export const reportSummary = async (req, res) => {
       return res.status(403).json({ message: "You are not authorized to report this summary" });
     }
 
-    dispute.status = "AI_SUMMARIZING";
-    dispute.ai_summary.regeneration_count = (dispute.ai_summary.regeneration_count || 0) + 1;
+    // Store feedback only — no regeneration
+    if (!dispute.ai_summary.feedback) dispute.ai_summary.feedback = [];
+    dispute.ai_summary.feedback.push({
+      reporter_id:   req.user._id,
+      reporter_role: dispute.creator_id.toString() === req.user._id.toString() ? "creator" : "joiner",
+      feedback:      feedback.trim(),
+      reported_at:   new Date()
+    });
     await dispute.save();
 
-    if (req.app.get('io')) {
-      req.app.get('io').to(dispute_id).emit("summary_regenerating", {
-        message: "Regenerating summary based on your feedback...",
-        regeneration_count: dispute.ai_summary.regeneration_count,
-        timestamp: new Date()
+    if (req.app.get("io")) {
+      req.app.get("io").to(dispute_id).emit("summary_reported", {
+        status:     dispute.status,
+        message:    "Feedback recorded. Thank you.",
+        timestamp:  new Date()
       });
     }
 
-    try {
-      const messages = await DisputeMessage.find({ dispute_id })
-        .populate("sender_id", "firstName lastName email avatarId gender")
-        .sort({ timestamp: 1 });
-
-      let transcript = "";
-      for (const msg of messages) {
-        const senderName = msg.sender_role === "creator" ? "Person A" : "Person B";
-        if (msg.message_type === "text") {
-          transcript += `${senderName}: ${msg.text_content}\n`;
-        } else {
-          transcript += `${senderName}: [Audio message - ${msg.audio_data?.duration || 30}s]\n`;
-        }
-      }
-
-      const prompt = `You are a conflict mediator. You previously generated a summary, but a user reported an issue.
-
-PREVIOUS SUMMARY:
-${dispute.ai_summary.summary_text}
-
-PREVIOUS KEY POINTS:
-${dispute.ai_summary.key_points.map(kp => `- ${kp.point} (mentioned by: ${kp.mentioned_by})`).join("\n")}
-
-USER FEEDBACK:
-"${feedback.trim()}"
-
-ORIGINAL CONVERSATION:
-${transcript || "No messages — use context only."}
-
-CONTEXT:
-- Relationship: ${dispute.intake_data.relationship_type}
-- Goal: ${dispute.intake_data.goal}
-
-TASK: Generate an IMPROVED summary that specifically addresses the user's feedback.
-
-OUTPUT JSON:
-{
-  "main_topic": "One short sentence (max 10 words) describing the core issue of this dispute",
-  "summary_text": "Improved 2-3 paragraph summary addressing the feedback",
-  "key_points": [
-    {
-      "point": "Important point from conversation",
-      "mentioned_by": "creator" | "joiner" | "both"
-    }
-  ]
-}`;
-
-      const response = await callGemini(prompt);
-      const newSummary = cleanAIResponse(response);
-
-      dispute.ai_summary.main_topic = newSummary.main_topic || dispute.ai_summary.main_topic;
-      dispute.ai_summary.summary_text = newSummary.summary_text;
-      dispute.ai_summary.key_points = newSummary.key_points;
-      dispute.ai_summary.generated_at = new Date();
-      dispute.status = "SUMMARY_REVIEW";
-      dispute.summary_approval.creator_approved = false;
-      dispute.summary_approval.joiner_approved = false;
-      await dispute.save();
-
-      if (req.app.get('io')) {
-        req.app.get('io').to(dispute_id).emit("summary_updated", {
-          status: "SUMMARY_REVIEW",
-          summary: dispute.ai_summary,
-          message: "Summary has been regenerated based on feedback",
-          regeneration_count: dispute.ai_summary.regeneration_count,
-          timestamp: new Date()
-        });
-      }
-
-      return res.json({
-        success: true,
-        message: "Summary regenerated successfully",
-        summary: dispute.ai_summary,
-        regeneration_count: dispute.ai_summary.regeneration_count
-      });
-    } catch (aiErr) {
-      dispute.status = "SUMMARY_REVIEW";
-      await dispute.save();
-      if (req.app.get('io')) {
-        req.app.get('io').to(dispute_id).emit("summary_generation_failed", {
-          message: "Failed to regenerate summary. Please try again.",
-          error: aiErr.message
-        });
-      }
-      return res.status(500).json({ message: "Failed to regenerate summary", error: aiErr.message });
-    }
+    return res.json({
+      success: true,
+      message: "Feedback recorded. Thank you."
+    });
   } catch (err) {
     console.error("Report summary error:", err);
-    res.status(500).json({ message: "Failed to regenerate summary", error: err.message });
+    res.status(500).json({ message: "Failed to report summary", error: err.message });
   }
 };
 
