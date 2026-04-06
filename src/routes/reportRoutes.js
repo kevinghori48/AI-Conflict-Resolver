@@ -18,7 +18,7 @@ router.post("/generate", auth, upload.array("audio", 5), createReport);
 
 // 2. APPEND AUDIO (Single Audio)
 // upload.single("audio") allows just 1 file for appending
-router.post("/append", auth, upload.single("audio"), appendAudio);
+router.post("/append", auth, upload.array("audio", 10), appendAudio);
 
 // 3. GET REPORTS
 router.get("/history", auth, getReports);

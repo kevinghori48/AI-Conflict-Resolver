@@ -152,32 +152,36 @@ export const createReport = async (req, res) => {
   }
 };
 
-// 2. APPEND AUDIO (Re-Analyze)
+// 2. APPEND AUDIO (Re-Analyze) — accepts multiple new files
 export const appendAudio = async (req, res) => {
   try {
     const { report_id } = req.body;
-    const file = req.file; // The ONE new file
+    const files = req.files; // Array of new files
 
-    if (!report_id || !file) {
-      return res.status(400).json({ message: "Report ID and Audio File required." });
+    if (!report_id || !files || files.length === 0) {
+      return res.status(400).json({ message: "Report ID and at least one Audio File required." });
     }
 
     // A. Find Report (populate so we can read file_path for Gemini)
     const report = await Report.findById(report_id).populate("audio_ids");
     if (!report) return res.status(404).json({ message: "Report not found" });
 
-    // B. Save NEW Audio
-    const newAudio = await AudioFile.create({
-      user_id: req.user._id,
-      file_path: file.path,
-      original_name: file.originalname,
-      mimetype: file.mimetype,
-      size: file.size
-    });
+    // B. Save ALL NEW Audios to DB
+    const newAudioDocs = [];
+    for (const file of files) {
+      const newAudio = await AudioFile.create({
+        user_id: req.user._id,
+        file_path: file.path,
+        original_name: file.originalname,
+        mimetype: file.mimetype,
+        size: file.size
+      });
+      newAudioDocs.push(newAudio);
+    }
 
-    // C. Combine Old Audios + New Audio for Gemini
+    // C. Combine Old Audios + New Audios for Gemini
     // report.audio_ids is an array of full objects because of .populate()
-    const allAudioDocs = [...report.audio_ids, newAudio];
+    const allAudioDocs = [...report.audio_ids, ...newAudioDocs];
 
     // D. Re-Analyze EVERYTHING
     console.log(`Re-Analyzing ${allAudioDocs.length} files...`);
@@ -186,9 +190,9 @@ export const appendAudio = async (req, res) => {
     // E. Update Report with NEW Analysis
     // FIX: .populate() replaced audio_ids with full objects, so we must
     // re-map them back to plain ObjectIds before saving, otherwise
-    // Mongoose won't store the new ID correctly and the append is lost.
+    // Mongoose won't store the new IDs correctly and the append is lost.
     const oldIds = report.audio_ids.map(a => a._id);
-    report.audio_ids = [...oldIds, newAudio._id];
+    report.audio_ids = [...oldIds, ...newAudioDocs.map(a => a._id)];
 
     report.conflict_score      = analysis.conflict_score;
     report.emotional_intensity = analysis.emotional_intensity;
