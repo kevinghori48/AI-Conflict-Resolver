@@ -201,7 +201,9 @@ export const appendAudio = async (req, res) => {
     report.suggested_replies   = analysis.suggested_replies;
     await report.save();
 
-    res.json({ message: "Report updated with new context", report });
+    // Re-fetch the saved report fully populated so the response is clean and complete
+    const updatedReport = await Report.findById(report._id).populate("audio_ids");
+    res.json({ message: "Report updated with new context", report: updatedReport });
 
   } catch (err) {
     console.error("Append Error:", err);
