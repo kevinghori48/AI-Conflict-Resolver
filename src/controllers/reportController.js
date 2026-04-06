@@ -144,7 +144,9 @@ export const createReport = async (req, res) => {
       suggested_replies: analysis.suggested_replies
     });
 
-    res.status(201).json({ message: "Report generated successfully", report });
+    // Re-fetch fully populated so audio_ids have full file details
+    const populatedReport = await Report.findById(report._id).populate("audio_ids");
+    res.status(201).json({ message: "Report generated successfully", report: populatedReport });
 
   } catch (err) {
     console.error("Create Report Error:", err);
@@ -213,7 +215,9 @@ export const appendAudio = async (req, res) => {
 
 export const getReports = async (req, res) => {
   try {
-    const reports = await Report.find({ user_id: req.user._id }).sort({ createdAt: -1 });
+    const reports = await Report.find({ user_id: req.user._id })
+      .populate("audio_ids")
+      .sort({ createdAt: -1 });
     res.json(reports);
   } catch (err) {
     res.status(500).json({ message: "Error fetching reports" });
