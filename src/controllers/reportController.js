@@ -156,7 +156,7 @@ export const appendAudio = async (req, res) => {
       return res.status(400).json({ message: "Report ID and Audio File required." });
     }
 
-    // A. Find Report
+    // A. Find Report (populate so we can read file_path for Gemini)
     const report = await Report.findById(report_id).populate("audio_ids");
     if (!report) return res.status(404).json({ message: "Report not found" });
 
@@ -169,8 +169,8 @@ export const appendAudio = async (req, res) => {
       size: file.size
     });
 
-    // C. Combine Old Audios + New Audio
-    // report.audio_ids is an array of objects because of .populate()
+    // C. Combine Old Audios + New Audio for Gemini
+    // report.audio_ids is an array of full objects because of .populate()
     const allAudioDocs = [...report.audio_ids, newAudio];
 
     // D. Re-Analyze EVERYTHING (The "Combined Report" feature)
@@ -178,12 +178,17 @@ export const appendAudio = async (req, res) => {
     const analysis = await generateAnalysis(allAudioDocs, report.conversation_type, report.objective);
 
     // E. Update Report with NEW Analysis
-    report.audio_ids.push(newAudio._id); // Add just the ID to the list
-    report.conflict_score = analysis.conflict_score;
+    // FIX: .populate() replaced audio_ids with full objects, so we must
+    // re-map them back to plain ObjectIds before saving, otherwise
+    // Mongoose won't store the new ID correctly and the append is lost.
+    const oldIds = report.audio_ids.map(a => a._id);
+    report.audio_ids = [...oldIds, newAudio._id];
+
+    report.conflict_score      = analysis.conflict_score;
     report.emotional_intensity = analysis.emotional_intensity;
-    report.summary_points = analysis.summary_points;
-    report.advice = analysis.advice;
-    report.suggested_replies = analysis.suggested_replies;
+    report.summary_points      = analysis.summary_points;
+    report.advice              = analysis.advice;
+    report.suggested_replies   = analysis.suggested_replies;
     await report.save();
 
     res.json({ message: "Report updated with new context", report });
