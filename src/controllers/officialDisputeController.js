@@ -710,9 +710,14 @@ export const reportSummary = async (req, res) => {
 
     if (req.app.get("io")) {
       req.app.get("io").to(dispute_id).emit("summary_reported", {
-        status:     dispute.status,
-        message:    "Feedback recorded. Thank you.",
-        timestamp:  new Date()
+        status:         dispute.status,
+        message:        "Feedback recorded. Thank you.",
+        timestamp:      new Date(),
+        reported_by: {
+          user_id:      req.user._id,
+          name:         `${req.user.firstName} ${req.user.lastName}`,
+          role:         dispute.creator_id.toString() === req.user._id.toString() ? "creator" : "joiner"
+        }
       });
     }
 
@@ -1855,6 +1860,19 @@ export const reportFinalPlanIssue = async (req, res) => {
     }
 
     await dispute.save();
+
+    if (req.app.get('io')) {
+      req.app.get('io').to(dispute_id).emit("plan_reported", {
+        status:         dispute.status,
+        message:        "Plan issue reported. Thank you.",
+        timestamp:      new Date(),
+        reported_by: {
+          user_id:      req.user._id,
+          name:         `${req.user.firstName} ${req.user.lastName}`,
+          role:         isCreator ? "creator" : "joiner"
+        }
+      });
+    }
 
     if (dispute.status === "COMPLETED" && req.app.get('io')) {
       req.app.get('io').to(dispute_id).emit("dispute_completed", {
