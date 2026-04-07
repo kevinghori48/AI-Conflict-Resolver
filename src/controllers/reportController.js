@@ -169,8 +169,14 @@ export const appendAudio = async (req, res) => {
     if (!report) return res.status(404).json({ message: "Report not found" });
 
     // B. Save ALL NEW Audios to DB
+    // Deduplicate: skip any file whose original_name already exists in this report
+    const existingNames = new Set(report.audio_ids.map(a => a.original_name));
     const newAudioDocs = [];
     for (const file of files) {
+      if (existingNames.has(file.originalname)) {
+        console.log(`Skipping duplicate file: ${file.originalname}`);
+        continue;
+      }
       const newAudio = await AudioFile.create({
         user_id: req.user._id,
         file_path: file.path,
@@ -179,6 +185,11 @@ export const appendAudio = async (req, res) => {
         size: file.size
       });
       newAudioDocs.push(newAudio);
+      existingNames.add(file.originalname); // prevent duplicates within same request too
+    }
+
+    if (newAudioDocs.length === 0) {
+      return res.status(400).json({ message: "All provided files are already in this report." });
     }
 
     // C. Combine Old Audios + New Audios for Gemini
