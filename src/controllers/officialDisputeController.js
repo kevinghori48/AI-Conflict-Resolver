@@ -590,6 +590,21 @@ export const endConversation = async (req, res) => {
 export async function generateAISummary(dispute, dispute_id, io) {
   try {
     console.log(`[generateAISummary] START | dispute: ${dispute._id}`);
+
+    // Ensure creator and joiner are populated so we can use real names in prompts
+    if (!dispute.creator_id?.firstName) {
+      await dispute.populate("creator_id", "firstName lastName email");
+    }
+    if (dispute.joiner_id && !dispute.joiner_id?.firstName) {
+      await dispute.populate("joiner_id", "firstName lastName email");
+    }
+    const creatorName = dispute.creator_id?.firstName
+      ? `${dispute.creator_id.firstName} ${dispute.creator_id.lastName}`
+      : "Person A";
+    const joinerName = dispute.joiner_id?.firstName
+      ? `${dispute.joiner_id.firstName} ${dispute.joiner_id.lastName}`
+      : "Person B";
+
     const messages = await DisputeMessage.find({ dispute_id: dispute._id.toString() })
       .populate("sender_id", "firstName lastName email avatarId gender")
       .sort({ timestamp: 1 });
@@ -598,7 +613,7 @@ export async function generateAISummary(dispute, dispute_id, io) {
 
     let transcript = "";
     for (const msg of messages) {
-      const senderName = msg.sender_role === "creator" ? "Person A" : "Person B";
+      const senderName = msg.sender_role === "creator" ? creatorName : joinerName;
       if (msg.message_type === "text") {
         transcript += `${senderName}: ${msg.text_content}\n`;
       } else {
@@ -865,7 +880,7 @@ export const approveSummary = async (req, res) => {
         creator_approved: updated.summary_approval.creator_approved,
         joiner_approved:  updated.summary_approval.joiner_approved,
         both_approved:    false,
-        message:          `${approverRole === "creator" ? "Person A" : "Person B"} approved the summary. Waiting for the other party.`,
+        message:          `${req.user.firstName} ${req.user.lastName} approved the summary. Waiting for the other party.`,
         timestamp:        ts
       };
 
@@ -926,6 +941,21 @@ export const getAISummary = async (req, res) => {
 export async function generateSolutions(dispute, dispute_id, io) {
   try {
     console.log(`[generateSolutions] START | dispute: ${dispute._id}`);
+
+    // Ensure creator and joiner are populated so we can use real names in prompts
+    if (!dispute.creator_id?.firstName) {
+      await dispute.populate("creator_id", "firstName lastName email");
+    }
+    if (dispute.joiner_id && !dispute.joiner_id?.firstName) {
+      await dispute.populate("joiner_id", "firstName lastName email");
+    }
+    const creatorName = dispute.creator_id?.firstName
+      ? `${dispute.creator_id.firstName} ${dispute.creator_id.lastName}`
+      : "Person A";
+    const joinerName = dispute.joiner_id?.firstName
+      ? `${dispute.joiner_id.firstName} ${dispute.joiner_id.lastName}`
+      : "Person B";
+
     const prompt = `You are a conflict resolution expert generating solution options.
 
 CONTEXT:
@@ -944,8 +974,8 @@ ${dispute.ai_summary.key_points.map(kp => `- ${kp.point} (${kp.mentioned_by})`).
 TASK: Generate 3-5 possible solution options labeled A, B, C, D, E.
 
 REQUIREMENTS:
-- Option A: Should favor Person A (creator) more
-- Option B: Should favor Person B (joiner) more
+- Option A: Should favor ${creatorName} (creator) more
+- Option B: Should favor ${joinerName} (joiner) more
 - Option C: Balanced compromise between both parties
 - Options D & E: Creative alternative solutions (if applicable)
 - Each option MUST have specific pros and cons for BOTH sides
@@ -960,12 +990,12 @@ OUTPUT JSON:
       "title": "Concise title (5-7 words)",
       "description": "Detailed description of the solution (2-3 sentences)",
       "pros": {
-        "creator": ["Specific benefit 1 for Person A", "Specific benefit 2 for Person A"],
-        "joiner": ["Specific benefit 1 for Person B", "Specific benefit 2 for Person B"]
+        "creator": ["Specific benefit 1 for ${creatorName}", "Specific benefit 2 for ${creatorName}"],
+        "joiner": ["Specific benefit 1 for ${joinerName}", "Specific benefit 2 for ${joinerName}"]
       },
       "cons": {
-        "creator": ["Specific drawback 1 for Person A", "Specific drawback 2 for Person A"],
-        "joiner": ["Specific drawback 1 for Person B", "Specific drawback 2 for Person B"]
+        "creator": ["Specific drawback 1 for ${creatorName}", "Specific drawback 2 for ${creatorName}"],
+        "joiner": ["Specific drawback 1 for ${joinerName}", "Specific drawback 2 for ${joinerName}"]
       }
     }
   ]
@@ -1162,6 +1192,21 @@ export const selectSolutions = async (req, res) => {
 export async function generateSuggestedPlan(dispute, io) {
   try {
     console.log(`[generateSuggestedPlan] START | dispute: ${dispute._id}`);
+
+    // Ensure creator and joiner are populated so we can use real names in prompts
+    if (!dispute.creator_id?.firstName) {
+      await dispute.populate("creator_id", "firstName lastName email");
+    }
+    if (dispute.joiner_id && !dispute.joiner_id?.firstName) {
+      await dispute.populate("joiner_id", "firstName lastName email");
+    }
+    const creatorName = dispute.creator_id?.firstName
+      ? `${dispute.creator_id.firstName} ${dispute.creator_id.lastName}`
+      : "Person A";
+    const joinerName = dispute.joiner_id?.firstName
+      ? `${dispute.joiner_id.firstName} ${dispute.joiner_id.lastName}`
+      : "Person B";
+
     const creatorSelectedSolutions = dispute.solutions.filter(s =>
       dispute.solution_selections.creator_selected.includes(s.id)
     );
@@ -1180,10 +1225,10 @@ CONTEXT:
 ORIGINAL DISPUTE SUMMARY:
 ${dispute.ai_summary.summary_text}
 
-PERSON A (Creator) selected these solutions:
+${creatorName} (Creator) selected these solutions:
 ${creatorSelectedSolutions.map(s => `- Option ${s.id}: ${s.title} — ${s.description}`).join("\n")}
 
-PERSON B (Joiner) selected these solutions:
+${joinerName} (Joiner) selected these solutions:
 ${joinerSelectedSolutions.map(s => `- Option ${s.id}: ${s.title} — ${s.description}`).join("\n")}
 
 TASK: Create a fair suggested resolution plan that balances both parties' selected solutions. This is a SUGGESTION — both parties will review it and can either accept it or negotiate further.
@@ -1202,8 +1247,8 @@ OUTPUT JSON:
       }
     ],
     "commitments": {
-      "creator": ["Specific commitment for Person A"],
-      "joiner": ["Specific commitment for Person B"]
+      "creator": ["Specific commitment for ${creatorName}"],
+      "joiner": ["Specific commitment for ${joinerName}"]
     },
     "success_criteria": "How both parties will know the resolution is working"
   }
@@ -1388,33 +1433,116 @@ export const rejectSuggestedPlan = async (req, res) => {
     if (!isParticipant) return res.status(403).json({ message: "Not a participant" });
 
     const isCreator = dispute.creator_id.toString() === req.user._id.toString();
+    const rejecterRole = isCreator ? "creator" : "joiner";
+    const otherRole    = isCreator ? "joiner"  : "creator";
 
-    dispute.suggested_plan_approval = { creator_approved: false, joiner_approved: false, rejected_by: isCreator ? "creator" : "joiner" };
+    // Determine if the other party had a pending acceptance that must be auto-cancelled
+    const otherHadAccepted = isCreator
+      ? dispute.suggested_plan_approval?.joiner_approved
+      : dispute.suggested_plan_approval?.creator_approved;
+
+    // Reset both acceptance flags and record who rejected
+    dispute.suggested_plan_approval = {
+      creator_approved: false,
+      joiner_approved:  false,
+      rejected_by:      rejecterRole
+    };
     dispute.status = "NEGOTIATION";
     await dispute.save();
 
-    if (req.app.get('io')) {
-      req.app.get('io').to(dispute_id).emit("negotiation_started", {
-        status: "NEGOTIATION",
-        rejected_by: isCreator ? "creator" : "joiner",
-        reason: reason || "Party wants to negotiate further",
-        suggested_plan: dispute.suggested_plan,
-        creator_selections: dispute.solution_selections.creator_selected,
-        joiner_selections: dispute.solution_selections.joiner_selected,
-        message: "Suggested plan rejected. Starting negotiation round.",
-        timestamp: new Date()
+    if (req.app.get("io")) {
+      req.app.get("io").to(dispute_id).emit("negotiation_started", {
+        status:                  "NEGOTIATION",
+        rejected_by:             rejecterRole,
+        rejected_by_name:        `${req.user.firstName} ${req.user.lastName}`,
+        cancelled_acceptance_of: otherHadAccepted ? otherRole : null,
+        reason:                  reason || "Party wants to negotiate further",
+        suggested_plan:          dispute.suggested_plan,
+        creator_selections:      dispute.solution_selections.creator_selected,
+        joiner_selections:       dispute.solution_selections.joiner_selected,
+        message:                 "Suggested plan rejected. Starting negotiation round.",
+        timestamp:               new Date()
       });
     }
 
     res.json({
-      success: true,
-      message: "Suggested plan rejected. Negotiation phase started.",
-      status: "NEGOTIATION",
-      rejected_by: isCreator ? "creator" : "joiner"
+      success:                 true,
+      message:                 "Suggested plan rejected. Negotiation phase started.",
+      status:                  "NEGOTIATION",
+      rejected_by:             rejecterRole,
+      cancelled_acceptance_of: otherHadAccepted ? otherRole : null
     });
   } catch (err) {
     console.error("Reject suggested plan error:", err);
     res.status(500).json({ message: "Failed to reject plan", error: err.message });
+  }
+};
+
+// CANCEL ACCEPTANCE — undo a previously accepted suggested plan while the other party hasn't responded yet
+export const cancelAcceptance = async (req, res) => {
+  try {
+    const { dispute_id } = req.body;
+
+    const dispute = await OfficialDispute.findById(dispute_id);
+    if (!dispute) return res.status(404).json({ message: "Dispute not found" });
+
+    if (dispute.status !== "SUGGESTED_PLAN_REVIEW") {
+      return res.status(400).json({ message: "No suggested plan is currently under review" });
+    }
+
+    const isCreator = dispute.creator_id.toString() === req.user._id.toString();
+    const isJoiner  = dispute.joiner_id?.toString()  === req.user._id.toString();
+
+    if (!isCreator && !isJoiner) {
+      return res.status(403).json({ message: "Not a participant" });
+    }
+
+    const role = isCreator ? "creator" : "joiner";
+
+    // Check this user actually had a pending acceptance to cancel
+    const hasAccepted = isCreator
+      ? dispute.suggested_plan_approval?.creator_approved
+      : dispute.suggested_plan_approval?.joiner_approved;
+
+    if (!hasAccepted) {
+      return res.status(400).json({ message: "You have not accepted the plan yet" });
+    }
+
+    // Cannot cancel if the other party has also already accepted (dispute would already be COMPLETED)
+    const otherAccepted = isCreator
+      ? dispute.suggested_plan_approval?.joiner_approved
+      : dispute.suggested_plan_approval?.creator_approved;
+
+    if (otherAccepted) {
+      return res.status(400).json({ message: "Cannot cancel — other party has already accepted" });
+    }
+
+    // Reset only this user's acceptance flag
+    if (isCreator) dispute.suggested_plan_approval.creator_approved = false;
+    else           dispute.suggested_plan_approval.joiner_approved  = false;
+
+    await dispute.save();
+
+    if (req.app.get("io")) {
+      req.app.get("io").to(dispute_id).emit("acceptance_cancelled", {
+        cancelled_by:      role,
+        cancelled_by_name: `${req.user.firstName} ${req.user.lastName}`,
+        creator_approved:  dispute.suggested_plan_approval.creator_approved,
+        joiner_approved:   dispute.suggested_plan_approval.joiner_approved,
+        message:           `${req.user.firstName} cancelled their acceptance of the plan.`,
+        timestamp:         new Date()
+      });
+    }
+
+    res.json({
+      success:          true,
+      message:          "Acceptance cancelled.",
+      creator_approved: dispute.suggested_plan_approval.creator_approved,
+      joiner_approved:  dispute.suggested_plan_approval.joiner_approved
+    });
+  } catch (err) {
+    console.error("Cancel acceptance error:", err);
+    res.status(500).json({ message: "Failed to cancel acceptance", error: err.message });
   }
 };
 
@@ -1643,6 +1771,21 @@ export const signalAgreement = async (req, res) => {
 export async function generateFinalPlan(dispute, dispute_id, io) {
   try {
     console.log(`[generateFinalPlan] START | dispute: ${dispute._id}`);
+
+    // Ensure creator and joiner are populated so we can use real names in prompts
+    if (!dispute.creator_id?.firstName) {
+      await dispute.populate("creator_id", "firstName lastName email");
+    }
+    if (dispute.joiner_id && !dispute.joiner_id?.firstName) {
+      await dispute.populate("joiner_id", "firstName lastName email");
+    }
+    const creatorName = dispute.creator_id?.firstName
+      ? `${dispute.creator_id.firstName} ${dispute.creator_id.lastName}`
+      : "Person A";
+    const joinerName = dispute.joiner_id?.firstName
+      ? `${dispute.joiner_id.firstName} ${dispute.joiner_id.lastName}`
+      : "Person B";
+
     const creatorSelectedSolutions = dispute.solutions.filter(s =>
       dispute.solution_selections.creator_selected.includes(s.id)
     );
@@ -1651,7 +1794,7 @@ export async function generateFinalPlan(dispute, dispute_id, io) {
     );
 
     const negotiationThread = dispute.negotiation.comments
-      .map(c => `${c.sender_role === "creator" ? "Person A" : "Person B"}: ${c.text}`)
+      .map(c => `${c.sender_role === "creator" ? creatorName : joinerName}: ${c.text}`)
       .join("\n");
 
     // Build a section for the previously rejected suggested plan, if one exists
@@ -1662,8 +1805,8 @@ Summary: ${dispute.suggested_plan.summary}
 Action Steps:
 ${(dispute.suggested_plan.action_steps || []).map(s => `  ${s.step}. [${s.responsible}] ${s.action} (${s.timeframe})`).join("\n")}
 Commitments:
-  Person A: ${(dispute.suggested_plan.commitments?.creator || []).join("; ")}
-  Person B: ${(dispute.suggested_plan.commitments?.joiner || []).join("; ")}
+  ${creatorName}: ${(dispute.suggested_plan.commitments?.creator || []).join("; ")}
+  ${joinerName}: ${(dispute.suggested_plan.commitments?.joiner || []).join("; ")}
 
 The parties reviewed this plan and rejected it. The negotiation comments below explain what they want changed. Your new plan MUST meaningfully differ from the above based on that feedback.`
       : "";
@@ -1679,10 +1822,10 @@ CONTEXT:
 ORIGINAL DISPUTE SUMMARY:
 ${dispute.ai_summary.summary_text}
 
-PERSON A (Creator) preferred these solutions:
+${creatorName} (Creator) preferred these solutions:
 ${creatorSelectedSolutions.map(s => `- Option ${s.id}: ${s.title} — ${s.description}`).join("\n")}
 
-PERSON B (Joiner) preferred these solutions:
+${joinerName} (Joiner) preferred these solutions:
 ${joinerSelectedSolutions.map(s => `- Option ${s.id}: ${s.title} — ${s.description}`).join("\n")}
 
 ${rejectedPlanSection}
@@ -1706,8 +1849,8 @@ OUTPUT JSON:
       }
     ],
     "commitments": {
-      "creator": ["Specific commitment Person A is making"],
-      "joiner": ["Specific commitment Person B is making"]
+      "creator": ["Specific commitment ${creatorName} is making"],
+      "joiner": ["Specific commitment ${joinerName} is making"]
     },
     "success_criteria": "How both parties will know the resolution is working"
   }
@@ -1802,10 +1945,13 @@ export const approveFinalPlan = async (req, res) => {
 
     if (req.app.get('io')) {
       req.app.get('io').to(dispute_id).emit("plan_approval_update", {
+        approved_by:      isCreator ? "creator" : "joiner",
+        approved_by_name: `${req.user.firstName} ${req.user.lastName}`,
         creator_approved: dispute.final_plan_approval.creator_approved,
-        joiner_approved: dispute.final_plan_approval.joiner_approved,
-        message: "Approval recorded. Waiting for other party.",
-        timestamp: new Date()
+        joiner_approved:  dispute.final_plan_approval.joiner_approved,
+        both_approved:    false,
+        message:          `${req.user.firstName} approved the final plan. Waiting for the other party.`,
+        timestamp:        new Date()
       });
     }
 

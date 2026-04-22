@@ -954,7 +954,70 @@ OUTPUT JSON:
       }
 
       const isCreator = dispute.creator_id.toString() === socket.userId;
-      const isJoiner = dispute.joiner_id?.toString() === socket.userId;
+      const isJoiner  = dispute.joiner_id?.toString()  === socket.userId;
+      if (!isCreator && !isJoiner) {
+        if (callback) callback({ success: false, message: "Not a participant" });
+        return;
+      }
+
+      const rejecterRole = isCreator ? "creator" : "joiner";
+      const otherRole    = isCreator ? "joiner"  : "creator";
+
+      // Check if the other party had a pending acceptance that is now auto-cancelled
+      const otherHadAccepted = isCreator
+        ? dispute.suggested_plan_approval?.joiner_approved
+        : dispute.suggested_plan_approval?.creator_approved;
+
+      // Reset both approval flags
+      dispute.suggested_plan_approval = { creator_approved: false, joiner_approved: false, rejected_by: rejecterRole };
+      dispute.status = "NEGOTIATION";
+      await dispute.save();
+      console.log(`[reject_suggested_plan] [SAVE] status → NEGOTIATION | rejected by: ${rejecterRole} | dispute: ${roomId}`);
+
+      io.to(roomId).emit("negotiation_started", {
+        status:                  "NEGOTIATION",
+        rejected_by:             rejecterRole,
+        rejected_by_name:        `${socket.user.firstName} ${socket.user.lastName}`,
+        cancelled_acceptance_of: otherHadAccepted ? otherRole : null,
+        reason:                  reason || "Party wants to negotiate further",
+        suggested_plan:          dispute.suggested_plan,
+        creator_selections:      dispute.solution_selections.creator_selected,
+        joiner_selections:       dispute.solution_selections.joiner_selected,
+        message:                 "Suggested plan rejected. Starting negotiation round.",
+        timestamp:               new Date()
+      });
+      console.log(`[EMIT] negotiation_started | to room: ${roomId} | rejected by: ${rejecterRole}`);
+
+      if (callback) callback({ success: true, status: "NEGOTIATION", rejected_by: rejecterRole, cancelled_acceptance_of: otherHadAccepted ? otherRole : null });
+    });
+
+    // ─── CANCEL ACCEPTANCE ────────────────────────────────────────────────────
+    // Lets a user undo their own acceptance while the other party hasn't responded yet.
+    // LISTEN : cancel_acceptance   { dispute_id }
+    // EMIT   : acceptance_cancelled → room
+    // EMIT   : callback             → caller
+    requireAuth("cancel_acceptance", async ({ dispute_id }, callback) => {
+      const roomId = getRoomDisputeId({ dispute_id });
+      console.log(`[LISTEN] cancel_acceptance | user: ${socket.user?.email} | dispute: ${roomId}`);
+
+      if (!roomId) {
+        if (callback) callback({ success: false, message: "dispute_id is required" });
+        return;
+      }
+
+      const dispute = await OfficialDispute.findById(roomId);
+      if (!dispute) {
+        if (callback) callback({ success: false, message: "Dispute not found" });
+        return;
+      }
+
+      if (dispute.status !== "SUGGESTED_PLAN_REVIEW") {
+        if (callback) callback({ success: false, message: "No suggested plan is currently under review" });
+        return;
+      }
+
+      const isCreator = dispute.creator_id.toString() === socket.userId;
+      const isJoiner  = dispute.joiner_id?.toString()  === socket.userId;
       if (!isCreator && !isJoiner) {
         if (callback) callback({ success: false, message: "Not a participant" });
         return;
@@ -962,24 +1025,41 @@ OUTPUT JSON:
 
       const role = isCreator ? "creator" : "joiner";
 
-      dispute.suggested_plan_approval = { creator_approved: false, joiner_approved: false, rejected_by: isCreator ? "creator" : "joiner" };
-      dispute.status = "NEGOTIATION";
+      const hasAccepted = isCreator
+        ? dispute.suggested_plan_approval?.creator_approved
+        : dispute.suggested_plan_approval?.joiner_approved;
+
+      if (!hasAccepted) {
+        if (callback) callback({ success: false, message: "You have not accepted the plan yet" });
+        return;
+      }
+
+      // Cannot cancel if the other party has also already accepted
+      const otherAccepted = isCreator
+        ? dispute.suggested_plan_approval?.joiner_approved
+        : dispute.suggested_plan_approval?.creator_approved;
+
+      if (otherAccepted) {
+        if (callback) callback({ success: false, message: "Cannot cancel — other party has already accepted" });
+        return;
+      }
+
+      if (isCreator) dispute.suggested_plan_approval.creator_approved = false;
+      else           dispute.suggested_plan_approval.joiner_approved  = false;
       await dispute.save();
-      console.log(`[reject_suggested_plan] [SAVE] status → NEGOTIATION | rejected by: ${role} | dispute: ${roomId}`);
+      console.log(`[cancel_acceptance] [SAVE] ${role} cancelled acceptance | dispute: ${roomId}`);
 
-      io.to(roomId).emit("negotiation_started", {
-        status: "NEGOTIATION",
-        rejected_by: isCreator ? "creator" : "joiner",
-        reason: reason || "Party wants to negotiate further",
-        suggested_plan: dispute.suggested_plan,
-        creator_selections: dispute.solution_selections.creator_selected,
-        joiner_selections: dispute.solution_selections.joiner_selected,
-        message: "Suggested plan rejected. Starting negotiation round.",
-        timestamp: new Date()
+      io.to(roomId).emit("acceptance_cancelled", {
+        cancelled_by:      role,
+        cancelled_by_name: `${socket.user.firstName} ${socket.user.lastName}`,
+        creator_approved:  dispute.suggested_plan_approval.creator_approved,
+        joiner_approved:   dispute.suggested_plan_approval.joiner_approved,
+        message:           `${socket.user.firstName} cancelled their acceptance of the plan.`,
+        timestamp:         new Date()
       });
-      console.log(`[EMIT] negotiation_started | to room: ${roomId} | rejected by: ${isCreator ? "creator" : "joiner"}`);
+      console.log(`[EMIT] acceptance_cancelled | to room: ${roomId} | by: ${role}`);
 
-      if (callback) callback({ success: true, status: "NEGOTIATION" });
+      if (callback) callback({ success: true, status: dispute.status, cancelled_by: role });
     });
 
     // ─── POST NEGOTIATION COMMENT ─────────────────────────────────────────────
@@ -1301,10 +1381,13 @@ OUTPUT JSON:
       }
 
       io.to(roomId).emit("plan_approval_update", {
+        approved_by:      isCreator ? "creator" : "joiner",
+        approved_by_name: `${socket.user.firstName} ${socket.user.lastName}`,
         creator_approved: dispute.final_plan_approval.creator_approved,
-        joiner_approved: dispute.final_plan_approval.joiner_approved,
-        message: "Approval recorded. Waiting for other party.",
-        timestamp: new Date()
+        joiner_approved:  dispute.final_plan_approval.joiner_approved,
+        both_approved:    false,
+        message:          `${socket.user.firstName} approved the final plan. Waiting for the other party.`,
+        timestamp:        new Date()
       });
       console.log(`[EMIT] plan_approval_update | to room: ${roomId} | creator: ${dispute.final_plan_approval.creator_approved} joiner: ${dispute.final_plan_approval.joiner_approved}`);
 
@@ -1543,72 +1626,6 @@ OUTPUT JSON:
           joiner_approved: updated.final_plan_approval.joiner_approved
         });
       }
-    });
-
-    // ─── REJECT FINAL PLAN → BACK TO NEGOTIATION ─────────────────────────────
-    // Either party can reject the AI final plan and restart negotiation.
-    // LISTEN : reject_final_plan   { dispute_id, reason? }
-    // EMIT   : plan_rejected       → room  (with who rejected + reason)
-    // EMIT   : negotiation_started → room  (status flipped to NEGOTIATION)
-    // EMIT   : callback            → caller only
-    requireAuth("reject_final_plan", async ({ dispute_id, reason }, callback) => {
-      const roomId = getRoomDisputeId({ dispute_id });
-      console.log(`[LISTEN] reject_final_plan | user: ${socket.user?.email} | dispute: ${roomId} | reason: ${reason || "none"}`);
-
-      if (!roomId) {
-        if (callback) callback({ success: false, message: "dispute_id is required" });
-        return;
-      }
-
-      const dispute = await OfficialDispute.findById(roomId);
-      if (!dispute) {
-        if (callback) callback({ success: false, message: "Dispute not found" });
-        return;
-      }
-      if (dispute.status !== "FINAL_PLAN_REVIEW") {
-        console.log(`[reject_final_plan] wrong status: ${dispute.status} | dispute: ${roomId}`);
-        if (callback) callback({ success: false, message: "No final plan to reject" });
-        return;
-      }
-
-      const isCreator = dispute.creator_id.toString() === socket.userId;
-      const isJoiner  = dispute.joiner_id?.toString()  === socket.userId;
-      if (!isCreator && !isJoiner) {
-        if (callback) callback({ success: false, message: "Not a participant" });
-        return;
-      }
-
-      const rejecterRole = isCreator ? "creator" : "joiner";
-
-      // Reset approvals and drop back to NEGOTIATION
-      dispute.final_plan_approval = { creator_approved: false, joiner_approved: false };
-      dispute.negotiation.creator_ready = false;
-      dispute.negotiation.joiner_ready  = false;
-      dispute.status = "NEGOTIATION";
-      await dispute.save();
-      console.log(`[reject_final_plan] [SAVE] status → NEGOTIATION | rejected by: ${rejecterRole} | dispute: ${roomId}`);
-
-      io.to(roomId).emit("plan_rejected", {
-        rejected_by: rejecterRole,
-        reason: reason || "Party wants to negotiate further",
-        timestamp: new Date()
-      });
-      console.log(`[EMIT] plan_rejected | to room: ${roomId} | by: ${rejecterRole}`);
-
-      io.to(roomId).emit("negotiation_started", {
-        status: "NEGOTIATION",
-        rejected_by: rejecterRole,
-        reason: reason || "Party wants to negotiate further",
-        suggested_plan: dispute.suggested_plan,
-        final_plan: dispute.final_plan,
-        creator_selections: dispute.solution_selections.creator_selected,
-        joiner_selections:  dispute.solution_selections.joiner_selected,
-        message: "Final plan rejected. Returning to negotiation.",
-        timestamp: new Date()
-      });
-      console.log(`[EMIT] negotiation_started | to room: ${roomId} | triggered by: reject_final_plan | by: ${rejecterRole}`);
-
-      if (callback) callback({ success: true, status: "NEGOTIATION", rejected_by: rejecterRole });
     });
 
     // ════════════════════════════════════════════════════════════════════════════
