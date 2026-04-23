@@ -56,36 +56,116 @@ export const cleanAIResponse = (text) => {
     try { return JSON.parse(sanitizedObject[0]); } catch (_) {}
   }
 
+  // Log the raw response so you can see exactly what Gemini returned
   console.error("[cleanAIResponse] All parse attempts failed. Raw response:", text);
   throw new Error("AI returned invalid JSON format");
 };
 
-export async function callGemini(prompt, retries = 3) {
-  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-  const model = genAI.getGenerativeModel({
-    model: "gemini-2.5-flash",
-    generationConfig: {
-      responseMimeType: "application/json",
-      temperature: 0
-    }
+// ─── Groq fallback (OpenAI-compatible API) ────────────────────────────────────
+// Called automatically when Gemini returns 503. Requires GROQ_API_KEY in .env
+// Get your free key at: https://console.groq.com
+async function callGroq(prompt) {
+  if (!process.env.GROQ_API_KEY) {
+    throw new Error("GROQ_API_KEY not set — cannot use Groq fallback");
+  }
+
+  const strictPrompt = prompt + `\n\nCRITICAL: Your response MUST be valid JSON only. No markdown, no backticks, no explanation. Start with { and end with }. Nothing else.`;
+
+  const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type":  "application/json",
+      "Authorization": `Bearer ${process.env.GROQ_API_KEY}`
+    },
+    body: JSON.stringify({
+      model:       "llama-3.3-70b-versatile",
+      temperature: 0,
+      messages: [
+        { role: "system", content: "You are a helpful assistant that responds only in valid JSON." },
+        { role: "user",   content: strictPrompt }
+      ]
+    })
   });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Groq API error ${response.status}: ${errText}`);
+  }
+
+  const data = await response.json();
+  const text = data.choices?.[0]?.message?.content;
+  if (!text) throw new Error("Groq returned empty response");
+
+  cleanAIResponse(text); // validate JSON before returning
+  return text;
+}
+
+// ─── Main AI caller with Gemini → Groq fallback ───────────────────────────────
+export async function callGemini(prompt, retries = 4) {
+  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
+  // Gemini model order: try 2.5-flash first, fall back to 1.5-flash
+  const GEMINI_MODELS = ["gemini-2.5-flash", "gemini-1.5-flash"];
 
   const strictPrompt = prompt + `\n\nCRITICAL: Your response MUST be valid JSON only. No markdown, no backticks, no explanation. Start with { and end with }. Nothing else.`;
 
   let lastError;
+  let gemini503Count = 0;
+
   for (let attempt = 1; attempt <= retries; attempt++) {
+    const modelName = attempt <= 2 ? GEMINI_MODELS[0] : GEMINI_MODELS[1];
+    const model = genAI.getGenerativeModel({
+      model: modelName,
+      generationConfig: { responseMimeType: "application/json", temperature: 0 }
+    });
+
     try {
+      console.log(`[callGemini] attempt ${attempt}/${retries} | model: ${modelName}`);
       const result = await model.generateContent(strictPrompt);
       const text = result.response.text();
       cleanAIResponse(text);
       return text;
     } catch (err) {
       lastError = err;
-      console.warn(`[callGemini] attempt ${attempt}/${retries} returned invalid JSON — retrying...`);
-      await new Promise(r => setTimeout(r, 1000 * attempt));
+      const is503 = err?.message?.includes("503") || err?.message?.includes("Service Unavailable") || err?.message?.includes("high demand");
+
+      if (is503) {
+        gemini503Count++;
+        console.warn(`[callGemini] 503 overload | attempt ${attempt}/${retries} | model: ${modelName}`);
+
+        // After 2 consecutive 503s, try Groq immediately before continuing Gemini retries
+        if (gemini503Count >= 2 && process.env.GROQ_API_KEY) {
+          try {
+            console.log(`[callGemini] switching to Groq fallback after ${gemini503Count} Gemini 503s`);
+            const groqResult = await callGroq(prompt);
+            console.log(`[callGemini] Groq fallback succeeded`);
+            return groqResult;
+          } catch (groqErr) {
+            console.warn(`[callGemini] Groq fallback also failed: ${groqErr.message} — continuing Gemini retries`);
+          }
+        }
+
+        await new Promise(r => setTimeout(r, 4000 * attempt));
+      } else {
+        console.warn(`[callGemini] attempt ${attempt}/${retries} invalid JSON | model: ${modelName} — retrying in ${1000 * attempt}ms`);
+        await new Promise(r => setTimeout(r, 1000 * attempt));
+      }
     }
   }
-  throw new Error(`Gemini returned invalid JSON after ${retries} attempts: ${lastError?.message}`);
+
+  // Last resort: try Groq if all Gemini attempts failed
+  if (process.env.GROQ_API_KEY) {
+    try {
+      console.log(`[callGemini] all Gemini attempts exhausted — final Groq fallback`);
+      const groqResult = await callGroq(prompt);
+      console.log(`[callGemini] final Groq fallback succeeded`);
+      return groqResult;
+    } catch (groqErr) {
+      console.error(`[callGemini] Groq final fallback failed: ${groqErr.message}`);
+    }
+  }
+
+  throw new Error(`All AI providers failed. Last error: ${lastError?.message}`);
 }
 
 const generateCode = () => crypto.randomBytes(3).toString("hex").toUpperCase();
@@ -130,7 +210,7 @@ const RELATIONSHIP_QUESTIONS = {
   ]
 };
 
-// ─── SCREEN 1 & 2: DISPUTE CREATION ──────────────────────────────────────────
+// SCREEN 1 & 2: DISPUTE CREATION
 
 export const getRelationshipQuestions = async (req, res) => {
   try {
@@ -174,6 +254,7 @@ export const createDispute = async (req, res) => {
       }
     }
 
+    // Unique invite code
     let code = generateCode();
     while (await OfficialDispute.findOne({ invite_code: code })) {
       code = generateCode();
@@ -209,7 +290,7 @@ export const createDispute = async (req, res) => {
   }
 };
 
-// ─── SCREEN 4: JOIN DISPUTE ───────────────────────────────────────────────────
+// SCREEN 4: JOIN DISPUTE
 
 export const joinDispute = async (req, res) => {
   try {
@@ -241,6 +322,7 @@ export const joinDispute = async (req, res) => {
     await dispute.save();
     await dispute.populate("joiner_id", "firstName lastName email avatarId gender");
 
+    // FIX: was using undefined 'dispute_id' variable — use dispute._id.toString()
     if (req.app.get('io')) {
       req.app.get('io').to(dispute._id.toString()).emit("joiner_connected", {
         joiner_id: req.user._id,
@@ -265,7 +347,10 @@ export const joinDispute = async (req, res) => {
   }
 };
 
-// ─── SCREEN 5: CONVERSATION — AUDIO ──────────────────────────────────────────
+// SCREEN 5: CONVERSATION — AUDIO
+
+
+// SCREEN 5: CONVERSATION — AUDIO UPLOAD (step 1: upload file, get audio_id back)
 
 export const uploadAudio = async (req, res) => {
   try {
@@ -275,6 +360,7 @@ export const uploadAudio = async (req, res) => {
       return res.status(400).json({ message: "No audio file provided" });
     }
 
+    // Convert to MP3 for universal playback
     const mp3Path = file.path.replace(/\.[^.]+$/, "") + ".mp3";
     try {
       await convertToMp3(file.path, mp3Path);
@@ -283,6 +369,9 @@ export const uploadAudio = async (req, res) => {
       fs.renameSync(file.path, mp3Path);
     }
 
+    // Saved as a temporary audio record (not tied to a dispute yet).
+    // dispute_id and sender_role are intentionally omitted so Mongoose skips enum validation.
+    // They are filled in when the send_audio socket event fires.
     const message = await DisputeMessage.create({
       sender_id:    req.user._id,
       message_type: "audio",
@@ -291,7 +380,7 @@ export const uploadAudio = async (req, res) => {
         original_name: file.originalname.replace(/\.[^.]+$/, "") + ".mp3",
         mimetype:      "audio/mpeg",
         size:          fs.statSync(mp3Path).size,
-        duration:      0
+        duration:      0   // updated when send_audio socket event fires
       },
       status: "sent"
     });
@@ -312,8 +401,6 @@ export const uploadAudio = async (req, res) => {
   }
 };
 
-// NOTE: sendAudioMessage (multipart REST endpoint) is kept as a fallback for
-// clients that cannot use the two-step uploadAudio + send_audio socket flow.
 export const sendAudioMessage = async (req, res) => {
   try {
     const { dispute_id, duration } = req.body;
@@ -351,12 +438,14 @@ export const sendAudioMessage = async (req, res) => {
       return res.status(400).json({ message: "Maximum 5 audio messages allowed per person. You've reached the limit." });
     }
 
+    // Convert to MP3 for universal playback (iOS doesn't support webm).
+    // multer already wrote the raw file to file.path — convert it in place.
     const mp3Path = file.path.replace(/\.[^.]+$/, "") + ".mp3";
     try {
-      await convertToMp3(file.path, mp3Path);
+      await convertToMp3(file.path, mp3Path);  // deletes file.path on success
     } catch (convErr) {
       console.error("ffmpeg conversion failed, using raw file:", convErr);
-      fs.renameSync(file.path, mp3Path);
+      fs.renameSync(file.path, mp3Path);        // fallback: rename without converting
     }
 
     const message = await DisputeMessage.create({
@@ -401,6 +490,7 @@ export const sendAudioMessage = async (req, res) => {
     });
   } catch (err) {
     console.error("Send audio error:", err);
+    // Clean up whichever file exists (raw or converted)
     const rawPath = req.file?.path;
     const mp3PathOnErr = rawPath ? rawPath.replace(/\.[^.]+$/, "") + ".mp3" : null;
     for (const p of [rawPath, mp3PathOnErr]) {
@@ -421,6 +511,8 @@ export const getAudioFile = async (req, res) => {
       return res.status(404).json({ message: "Audio message not found" });
     }
 
+    // Allow audio to be streamed directly (no auth required)
+    // Message IDs are unguessable MongoDB ObjectIDs
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Accept-Ranges", "bytes");
 
@@ -437,6 +529,7 @@ export const getAudioFile = async (req, res) => {
       const stat = fs.statSync(filePath);
       const range = req.headers.range;
 
+      // Support range requests (required for iOS audio scrubbing)
       if (range) {
         const parts = range.replace(/bytes=/, "").split("-");
         const start = parseInt(parts[0], 10);
@@ -483,6 +576,7 @@ export const getConversationMessages = async (req, res) => {
     const query = { dispute_id };
     if (before) query.timestamp = { $lt: new Date(before) };
 
+    // FIX: was calling .reverse() twice — that cancelled out the sort. Now only called once.
     const messages = await DisputeMessage.find(query)
       .populate("sender_id", "firstName lastName email avatarId gender")
       .sort({ timestamp: -1 })
@@ -501,9 +595,6 @@ export const getConversationMessages = async (req, res) => {
   }
 };
 
-// ─── DUPLICATED BY SOCKET: end_conversation ───────────────────────────────────
-// Use the socket event "end_conversation" instead. This REST endpoint is kept
-// only as a fallback for clients without an active socket connection.
 export const endConversation = async (req, res) => {
   try {
     const { dispute_id } = req.body;
@@ -544,10 +635,14 @@ export const endConversation = async (req, res) => {
     setTimeout(async () => {
       try {
         const freshDispute = await OfficialDispute.findById(disputeIdString);
-        if (!freshDispute) return;
+        if (!freshDispute) {
+          console.error("Dispute not found during summary generation");
+          return;
+        }
         await generateAISummary(freshDispute, disputeIdString, ioInstance);
       } catch (error) {
         console.error("Summary generation failed:", error);
+        // generateAISummary already reverts status to CONVERSATION on failure
         if (ioInstance) {
           ioInstance.to(disputeIdString).emit("summary_generation_failed", {
             message: "Failed to generate summary. Please try again.",
@@ -568,12 +663,13 @@ export const endConversation = async (req, res) => {
   }
 };
 
-// ─── AI HELPER: GENERATE SUMMARY ─────────────────────────────────────────────
+// AI HELPER: GENERATE SUMMARY
 
 export async function generateAISummary(dispute, dispute_id, io) {
   try {
     console.log(`[generateAISummary] START | dispute: ${dispute._id}`);
 
+    // Ensure creator and joiner are populated so we can use real names in prompts
     if (!dispute.creator_id?.firstName) {
       await dispute.populate("creator_id", "firstName lastName email");
     }
@@ -669,12 +765,9 @@ OUTPUT JSON:
   }
 }
 
-// ─── SCREEN 6: AI SUMMARY — GET & READ-ONLY ENDPOINTS ────────────────────────
+// SCREEN 6: AI SUMMARY REVIEW
 
-// DUPLICATED BY SOCKET: report_summary (with regeneration)
-// Use the socket event "report_summary" instead — the socket version also
-// triggers regeneration. This REST endpoint only stores feedback without
-// regenerating, so prefer the socket path.
+// FIX: Added missing SUMMARY_REVIEW status guard
 export const reportSummary = async (req, res) => {
   try {
     const { dispute_id, feedback } = req.body;
@@ -698,6 +791,7 @@ export const reportSummary = async (req, res) => {
       return res.status(403).json({ message: "You are not authorized to report this summary" });
     }
 
+    // Store feedback only — no regeneration
     if (!dispute.ai_summary.feedback) dispute.ai_summary.feedback = [];
     dispute.ai_summary.feedback.push({
       reporter_id:   req.user._id,
@@ -720,20 +814,21 @@ export const reportSummary = async (req, res) => {
       });
     }
 
-    return res.json({ success: true, message: "Feedback recorded. Thank you." });
+    return res.json({
+      success: true,
+      message: "Feedback recorded. Thank you."
+    });
   } catch (err) {
     console.error("Report summary error:", err);
     res.status(500).json({ message: "Failed to report summary", error: err.message });
   }
 };
 
-// DUPLICATED BY SOCKET: approve_summary
-// Use the socket event "approve_summary" instead.
-// This REST endpoint is kept as a fallback for clients without an active socket.
 export const approveSummary = async (req, res) => {
   try {
     const { dispute_id } = req.body;
 
+    // Pre-check: load for authorization only (not for state decisions)
     const dispute = await OfficialDispute.findById(dispute_id);
     if (!dispute) return res.status(404).json({ message: "Dispute not found" });
 
@@ -748,6 +843,9 @@ export const approveSummary = async (req, res) => {
       return res.status(403).json({ message: "You are not authorized to approve this summary" });
     }
 
+    // Atomic update: only flip the approval flag if it is still false AND status is SUMMARY_REVIEW.
+    // This eliminates the read-modify-write race where two simultaneous requests both read
+    // approval=false, both pass the in-memory guard above, and both trigger generateSolutions.
     const approvalField = isCreator
       ? "summary_approval.creator_approved"
       : "summary_approval.joiner_approved";
@@ -759,12 +857,15 @@ export const approveSummary = async (req, res) => {
     );
 
     if (!updated) {
+      // Either already approved by this user, or status changed concurrently
       return res.status(400).json({
         message: "You have already approved the summary, or it is no longer under review"
       });
     }
 
     if (updated.summary_approval.creator_approved && updated.summary_approval.joiner_approved) {
+      // Emit summary_approved (both_approved: true) to every socket individually
+      // so each user gets their own your_approval value
       if (req.app.get('io')) {
         const approverRole = isCreator ? "creator" : "joiner";
         const ts = new Date();
@@ -775,13 +876,14 @@ export const approveSummary = async (req, res) => {
             creator_approved: true,
             joiner_approved:  true,
             both_approved:    true,
-            your_approval:    true,
+            your_approval:    true, // both approved — true for everyone
             message:          "Both parties approved the summary.",
             timestamp:        ts
           });
         }
       }
 
+      // Atomically claim the right to trigger generation by flipping status exactly once.
       const claimed = await OfficialDispute.findOneAndUpdate(
         { _id: dispute_id, status: "SUMMARY_REVIEW" },
         { $set: { status: "AI_SUMMARIZING" } },
@@ -806,14 +908,20 @@ export const approveSummary = async (req, res) => {
 
       const disputeIdString = dispute_id;
       const ioInstance = req.app.get('io');
+      console.log(`[approveSummary] ioInstance resolved: ${ioInstance ? "OK" : "NULL — check io middleware"}`);
 
       setTimeout(async () => {
         try {
           const freshDispute = await OfficialDispute.findById(disputeIdString);
-          if (!freshDispute) return;
+          if (!freshDispute) {
+            console.error("Dispute not found during solution generation");
+            return;
+          }
           await generateSolutions(freshDispute, disputeIdString, ioInstance);
         } catch (error) {
           console.error("Solution generation failed:", error);
+          // generateSolutions already reverts status & approvals internally.
+          // One extra defensive rollback in case the internal save also failed:
           try {
             const rollback = await OfficialDispute.findById(disputeIdString);
             if (rollback && rollback.status === "AI_SUMMARIZING") {
@@ -854,6 +962,7 @@ export const approveSummary = async (req, res) => {
         timestamp:        ts
       };
 
+      // Emit individually so each socket gets its own your_approval value
       const allSockets = await io.in(dispute_id).fetchSockets();
       for (const s of allSockets) {
         s.emit("summary_approved", {
@@ -905,12 +1014,13 @@ export const getAISummary = async (req, res) => {
   }
 };
 
-// ─── AI HELPER: GENERATE SOLUTIONS ───────────────────────────────────────────
+// AI HELPER: GENERATE SOLUTIONS
 
 export async function generateSolutions(dispute, dispute_id, io) {
   try {
     console.log(`[generateSolutions] START | dispute: ${dispute._id}`);
 
+    // Ensure creator and joiner are populated so we can use real names in prompts
     if (!dispute.creator_id?.firstName) {
       await dispute.populate("creator_id", "firstName lastName email");
     }
@@ -1006,7 +1116,7 @@ OUTPUT JSON:
   }
 }
 
-// ─── SCREEN 7: SOLUTIONS — GET ENDPOINT ──────────────────────────────────────
+// SCREEN 7: SOLUTIONS SELECTION
 
 export const getSolutions = async (req, res) => {
   try {
@@ -1031,9 +1141,6 @@ export const getSolutions = async (req, res) => {
   }
 };
 
-// DUPLICATED BY SOCKET: select_solutions
-// Use the socket event "select_solutions" instead.
-// This REST endpoint is kept as a fallback for clients without an active socket.
 export const selectSolutions = async (req, res) => {
   try {
     const { dispute_id, selected_solution_ids } = req.body;
@@ -1094,10 +1201,12 @@ export const selectSolutions = async (req, res) => {
           message: "Both parties have selected. AI is generating a suggested resolution plan...",
           timestamp: new Date()
         });
+        console.log(`[EMIT] generating_suggested_plan | to room: ${dispute_id}`);
       }
 
       const disputeIdString = dispute._id.toString();
       const ioInstance = req.app.get('io');
+      console.log(`[selectSolutions] ioInstance resolved: ${ioInstance ? "OK" : "NULL — check io middleware"}`);
 
       setTimeout(async () => {
         try {
@@ -1156,12 +1265,13 @@ export const selectSolutions = async (req, res) => {
   }
 };
 
-// ─── AI HELPER: GENERATE SUGGESTED PLAN ──────────────────────────────────────
+// AI HELPER: GENERATE SUGGESTED PLAN
 
 export async function generateSuggestedPlan(dispute, io) {
   try {
     console.log(`[generateSuggestedPlan] START | dispute: ${dispute._id}`);
 
+    // Ensure creator and joiner are populated so we can use real names in prompts
     if (!dispute.creator_id?.firstName) {
       await dispute.populate("creator_id", "firstName lastName email");
     }
@@ -1257,7 +1367,7 @@ OUTPUT JSON:
   }
 }
 
-// ─── SUGGESTED PLAN — GET ENDPOINT ───────────────────────────────────────────
+// SUGGESTED PLAN REVIEW
 
 export const getSuggestedPlan = async (req, res) => {
   try {
@@ -1296,9 +1406,6 @@ export const getSuggestedPlan = async (req, res) => {
   }
 };
 
-// DUPLICATED BY SOCKET: accept_suggested_plan
-// Use the socket event "accept_suggested_plan" instead.
-// This REST endpoint is kept as a fallback for clients without an active socket.
 export const acceptSuggestedPlan = async (req, res) => {
   try {
     const { dispute_id } = req.body;
@@ -1386,9 +1493,6 @@ export const acceptSuggestedPlan = async (req, res) => {
   }
 };
 
-// DUPLICATED BY SOCKET: reject_suggested_plan
-// Use the socket event "reject_suggested_plan" instead.
-// This REST endpoint is kept as a fallback for clients without an active socket.
 export const rejectSuggestedPlan = async (req, res) => {
   try {
     const { dispute_id, reason } = req.body;
@@ -1410,10 +1514,12 @@ export const rejectSuggestedPlan = async (req, res) => {
     const rejecterRole = isCreator ? "creator" : "joiner";
     const otherRole    = isCreator ? "joiner"  : "creator";
 
+    // Determine if the other party had a pending acceptance that must be auto-cancelled
     const otherHadAccepted = isCreator
       ? dispute.suggested_plan_approval?.joiner_approved
       : dispute.suggested_plan_approval?.creator_approved;
 
+    // Reset both acceptance flags and record who rejected
     dispute.suggested_plan_approval = {
       creator_approved: false,
       joiner_approved:  false,
@@ -1450,9 +1556,7 @@ export const rejectSuggestedPlan = async (req, res) => {
   }
 };
 
-// DUPLICATED BY SOCKET: cancel_acceptance
-// Use the socket event "cancel_acceptance" instead.
-// This REST endpoint is kept as a fallback for clients without an active socket.
+// CANCEL ACCEPTANCE — undo a previously accepted suggested plan while the other party hasn't responded yet
 export const cancelAcceptance = async (req, res) => {
   try {
     const { dispute_id } = req.body;
@@ -1471,6 +1575,9 @@ export const cancelAcceptance = async (req, res) => {
       return res.status(403).json({ message: "Not a participant" });
     }
 
+    const role = isCreator ? "creator" : "joiner";
+
+    // Check this user actually had a pending acceptance to cancel
     const hasAccepted = isCreator
       ? dispute.suggested_plan_approval?.creator_approved
       : dispute.suggested_plan_approval?.joiner_approved;
@@ -1479,6 +1586,7 @@ export const cancelAcceptance = async (req, res) => {
       return res.status(400).json({ message: "You have not accepted the plan yet" });
     }
 
+    // Cannot cancel if the other party has also already accepted (dispute would already be COMPLETED)
     const otherAccepted = isCreator
       ? dispute.suggested_plan_approval?.joiner_approved
       : dispute.suggested_plan_approval?.creator_approved;
@@ -1487,7 +1595,7 @@ export const cancelAcceptance = async (req, res) => {
       return res.status(400).json({ message: "Cannot cancel — other party has already accepted" });
     }
 
-    const role = isCreator ? "creator" : "joiner";
+    // Reset only this user's acceptance flag
     if (isCreator) dispute.suggested_plan_approval.creator_approved = false;
     else           dispute.suggested_plan_approval.joiner_approved  = false;
 
@@ -1516,11 +1624,8 @@ export const cancelAcceptance = async (req, res) => {
   }
 };
 
-// ─── SCREEN 8: NEGOTIATION — GET ENDPOINT ────────────────────────────────────
+// SCREEN 8: NEGOTIATION
 
-// DUPLICATED BY SOCKET: post_negotiation_comment / send_negotiation_comment
-// Use the socket events "post_negotiation_comment" or "send_negotiation_comment" instead.
-// This REST endpoint is kept as a fallback for clients without an active socket.
 export const postNegotiationComment = async (req, res) => {
   try {
     const { dispute_id, text } = req.body;
@@ -1552,6 +1657,7 @@ export const postNegotiationComment = async (req, res) => {
       timestamp: new Date()
     });
 
+    // Reset ready flags — both must re-confirm after each new message
     dispute.negotiation.creator_ready = false;
     dispute.negotiation.joiner_ready = false;
 
@@ -1617,9 +1723,6 @@ export const getNegotiationComments = async (req, res) => {
   }
 };
 
-// DUPLICATED BY SOCKET: signal_agreement / agree_negotiation
-// Use the socket events "signal_agreement" or "agree_negotiation" instead.
-// This REST endpoint is kept as a fallback for clients without an active socket.
 export const signalAgreement = async (req, res) => {
   try {
     const { dispute_id } = req.body;
@@ -1638,6 +1741,9 @@ export const signalAgreement = async (req, res) => {
       return res.status(403).json({ message: "You are not a participant of this dispute" });
     }
 
+    // Atomic update — flip this user's ready flag only if it is still false.
+    // This prevents two simultaneous HTTP calls from both reading ready=false,
+    // both passing the in-memory guard, and both calling generateFinalPlan.
     const readyField = isCreator
       ? "negotiation.creator_ready"
       : "negotiation.joiner_ready";
@@ -1655,6 +1761,7 @@ export const signalAgreement = async (req, res) => {
     }
 
     if (updatedReady.negotiation.creator_ready && updatedReady.negotiation.joiner_ready) {
+      // Atomically claim the right to trigger final plan generation — only one request wins.
       const claimed = await OfficialDispute.findOneAndUpdate(
         { _id: dispute_id, status: "NEGOTIATION" },
         { $set: { status: "AI_SUMMARIZING" } },
@@ -1662,6 +1769,7 @@ export const signalAgreement = async (req, res) => {
       );
 
       if (!claimed) {
+        // Another concurrent request already flipped status — generation already queued.
         return res.json({
           success: true,
           message: "Both parties agreed. Generating final resolution plan...",
@@ -1670,6 +1778,7 @@ export const signalAgreement = async (req, res) => {
       }
 
       const ioInstance = req.app.get('io');
+      console.log(`[signalAgreement] ioInstance resolved: ${ioInstance ? "OK" : "NULL — check io middleware"}`);
 
       if (ioInstance) {
         ioInstance.to(dispute_id).emit("both_agreed", {
@@ -1690,10 +1799,14 @@ export const signalAgreement = async (req, res) => {
       setTimeout(async () => {
         try {
           const freshDispute = await OfficialDispute.findById(disputeIdString);
-          if (!freshDispute) return;
+          if (!freshDispute) {
+            console.error("Dispute not found during final plan generation");
+            return;
+          }
           await generateFinalPlan(freshDispute, disputeIdString, ioInstance);
         } catch (error) {
           console.error("Final plan generation failed:", error);
+          // generateFinalPlan reverts status to NEGOTIATION internally
           if (ioInstance) {
             ioInstance.to(disputeIdString).emit("final_plan_failed", {
               message: "Failed to generate final plan. Please try again.",
@@ -1731,12 +1844,13 @@ export const signalAgreement = async (req, res) => {
   }
 };
 
-// ─── AI HELPER: GENERATE FINAL PLAN ──────────────────────────────────────────
+// AI HELPER: GENERATE FINAL PLAN (FIX: now exported)
 
 export async function generateFinalPlan(dispute, dispute_id, io) {
   try {
     console.log(`[generateFinalPlan] START | dispute: ${dispute._id}`);
 
+    // Ensure creator and joiner are populated so we can use real names in prompts
     if (!dispute.creator_id?.firstName) {
       await dispute.populate("creator_id", "firstName lastName email");
     }
@@ -1761,6 +1875,7 @@ export async function generateFinalPlan(dispute, dispute_id, io) {
       .map(c => `${c.sender_role === "creator" ? creatorName : joinerName}: ${c.text}`)
       .join("\n");
 
+    // Build a section for the previously rejected suggested plan, if one exists
     const rejectedPlanSection = dispute.suggested_plan && dispute.suggested_plan.title
       ? `PREVIOUSLY REJECTED PLAN (do NOT reproduce this — use it only to understand what was already tried and rejected):
 Title: ${dispute.suggested_plan.title}
@@ -1852,11 +1967,8 @@ OUTPUT JSON:
   }
 }
 
-// ─── SCREEN 9: FINAL PLAN — GET & READ-ONLY ENDPOINTS ────────────────────────
+// SCREEN 9: FINAL PLAN REVIEW
 
-// DUPLICATED BY SOCKET: approve_final_plan / confirm_final_plan
-// Use the socket events "approve_final_plan" or "confirm_final_plan" instead.
-// This REST endpoint is kept as a fallback for clients without an active socket.
 export const approveFinalPlan = async (req, res) => {
   try {
     const { dispute_id } = req.body;
@@ -1933,9 +2045,6 @@ export const approveFinalPlan = async (req, res) => {
   }
 };
 
-// DUPLICATED BY SOCKET: report_final_plan_issue
-// Use the socket event "report_final_plan_issue" instead.
-// This REST endpoint is kept as a fallback for clients without an active socket.
 export const reportFinalPlanIssue = async (req, res) => {
   try {
     const { dispute_id, feedback } = req.body;
@@ -1965,6 +2074,7 @@ export const reportFinalPlanIssue = async (req, res) => {
       reported_at: new Date()
     });
 
+    // Counts as implicit approval so the dispute can still complete
     if (isCreator) dispute.final_plan_approval.creator_approved = true;
     else dispute.final_plan_approval.joiner_approved = true;
 
@@ -2044,7 +2154,7 @@ export const getFinalPlan = async (req, res) => {
   }
 };
 
-// ─── GENERAL ENDPOINTS ────────────────────────────────────────────────────────
+// GENERAL ENDPOINTS
 
 export const getDisputeStatus = async (req, res) => {
   try {
@@ -2090,6 +2200,7 @@ export const getUserDisputes = async (req, res) => {
       limit = 10
     } = req.query;
 
+    // If type is provided, validate it
     if (type && !["major", "minor", "call"].includes(type)) {
       return res.status(400).json({ message: "Invalid type. Must be one of: major, minor, call" });
     }
@@ -2098,6 +2209,7 @@ export const getUserDisputes = async (req, res) => {
     const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
     const skip     = (pageNum - 1) * limitNum;
 
+    // No type provided — return all disputes from all 3 collections combined
     if (!type) {
       const majorQuery = { $or: [{ creator_id: req.user._id }, { joiner_id: req.user._id }] };
       const minorQuery = { $or: [{ creator_id: req.user._id }, { joiner_id: req.user._id }] };
@@ -2161,6 +2273,7 @@ export const getUserDisputes = async (req, res) => {
         }))
       ].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
+      // Apply pagination on combined results
       const total      = allDisputes.length;
       const totalPages = Math.ceil(total / limitNum);
       const paginated  = allDisputes.slice(skip, skip + limitNum);
@@ -2178,6 +2291,7 @@ export const getUserDisputes = async (req, res) => {
       });
     }
 
+    // ── MAJOR (OfficialDispute) ───────────────────────────────────────────────
     if (type === "major") {
       const query = {
         $or: [{ creator_id: req.user._id }, { joiner_id: req.user._id }]
@@ -2228,6 +2342,7 @@ export const getUserDisputes = async (req, res) => {
       });
     }
 
+    // ── MINOR (SmallDispute) ──────────────────────────────────────────────────
     if (type === "minor") {
       const query = {
         $or: [{ creator_id: req.user._id }, { joiner_id: req.user._id }]
@@ -2272,6 +2387,7 @@ export const getUserDisputes = async (req, res) => {
       });
     }
 
+    // ── CALL (Report) ─────────────────────────────────────────────────────────
     if (type === "call") {
       const query = { user_id: req.user._id };
 
@@ -2317,10 +2433,13 @@ export const getUserDisputes = async (req, res) => {
   }
 };
 
+// DETAIL PAGE: Full dispute info for a single dispute
+// Checks all 3 collections — major (OfficialDispute), minor (SmallDispute), call (Report)
 export const getMyDisputeDetails = async (req, res) => {
   try {
     const { dispute_id } = req.params;
 
+    // ── MAJOR (OfficialDispute) ───────────────────────────────────────────────
     const major = await OfficialDispute.findById(dispute_id)
       .populate("creator_id", "firstName lastName email avatarId gender")
       .populate("joiner_id", "firstName lastName email avatarId gender");
@@ -2345,6 +2464,7 @@ export const getMyDisputeDetails = async (req, res) => {
       });
     }
 
+    // ── MINOR (SmallDispute) ──────────────────────────────────────────────────
     const minor = await SmallDispute.findById(dispute_id)
       .populate("creator_id", "firstName lastName email avatarId gender")
       .populate("joiner_id", "firstName lastName email avatarId gender");
@@ -2366,6 +2486,7 @@ export const getMyDisputeDetails = async (req, res) => {
       });
     }
 
+    // ── CALL (Report) ─────────────────────────────────────────────────────────
     const report = await Report.findById(dispute_id);
 
     if (report) {
