@@ -90,6 +90,58 @@ const normalizeSensitiveTopics = (topics) =>
       )]
     : [];
 
+const ensureString = (value) => String(value || "").trim();
+
+const ensureStringArray = (value) => {
+  if (Array.isArray(value)) {
+    return value.map(ensureString).filter(Boolean);
+  }
+  const single = ensureString(value);
+  return single ? [single] : [];
+};
+
+function normalizeCommitments(commitments) {
+  if (!commitments || typeof commitments !== "object" || Array.isArray(commitments)) {
+    const flattened = ensureString(commitments);
+    return {
+      creator: flattened ? [flattened] : [],
+      joiner: []
+    };
+  }
+
+  return {
+    creator: ensureStringArray(commitments.creator),
+    joiner: ensureStringArray(commitments.joiner)
+  };
+}
+
+function normalizeActionSteps(actionSteps) {
+  if (!Array.isArray(actionSteps)) return [];
+
+  return actionSteps
+    .map((step, index) => ({
+      step: Number(step?.step) || index + 1,
+      action: ensureString(step?.action),
+      responsible: ensureString(step?.responsible),
+      timeframe: ensureString(step?.timeframe)
+    }))
+    .filter((step) => step.action);
+}
+
+function normalizePlanOutput(plan) {
+  return {
+    ...plan,
+    title: ensureString(plan?.title),
+    summary: ensureString(plan?.summary),
+    mediator_note: ensureString(plan?.mediator_note),
+    ai_suggestions: ensureStringArray(plan?.ai_suggestions).slice(0, 3),
+    sensitive_topics: normalizeSensitiveTopics(plan?.sensitive_topics),
+    action_steps: normalizeActionSteps(plan?.action_steps),
+    commitments: normalizeCommitments(plan?.commitments),
+    success_criteria: ensureString(plan?.success_criteria)
+  };
+}
+
 function highlightSensitiveText(text, sensitiveTopics) {
   const escapedText = escapeHtml(text || "");
   if (!escapedText) return "";
@@ -109,25 +161,26 @@ function highlightSensitiveText(text, sensitiveTopics) {
 }
 
 function decoratePlanWithHighlights(plan) {
-  const sensitiveTopics = normalizeSensitiveTopics(plan?.sensitive_topics);
-  const creatorCommitments = Array.isArray(plan?.commitments?.creator) ? plan.commitments.creator : [];
-  const joinerCommitments = Array.isArray(plan?.commitments?.joiner) ? plan.commitments.joiner : [];
+  const normalizedPlan = normalizePlanOutput(plan);
+  const sensitiveTopics = normalizedPlan.sensitive_topics;
+  const creatorCommitments = normalizedPlan.commitments.creator;
+  const joinerCommitments = normalizedPlan.commitments.joiner;
 
   return {
-    ...plan,
-    sensitive_topics: sensitiveTopics,
-    summary_html: highlightSensitiveText(plan?.summary || "", sensitiveTopics),
-    action_steps: Array.isArray(plan?.action_steps)
-      ? plan.action_steps.map((step) => ({
+    ...normalizedPlan,
+    // We use the detected topics only for inline highlights so the frontend
+    // doesn't render a separate "sensitive topics" section.
+    sensitive_topics: [],
+    summary_html: highlightSensitiveText(normalizedPlan.summary, sensitiveTopics),
+    action_steps: normalizedPlan.action_steps.map((step) => ({
           ...step,
           action_html: highlightSensitiveText(step?.action || "", sensitiveTopics)
-        }))
-      : [],
+        })),
     commitments_html: {
       creator: creatorCommitments.map((item) => highlightSensitiveText(item, sensitiveTopics)),
       joiner: joinerCommitments.map((item) => highlightSensitiveText(item, sensitiveTopics))
     },
-    success_criteria_html: highlightSensitiveText(plan?.success_criteria || "", sensitiveTopics)
+    success_criteria_html: highlightSensitiveText(normalizedPlan.success_criteria, sensitiveTopics)
   };
 }
 
@@ -1452,20 +1505,21 @@ TASK: Create a fair suggested resolution plan that balances both parties' select
 
 IMPORTANT:
 - Make the AI's role visible and useful to the user.
-- Add a short mediator note explaining why this plan could work.
-- Add 3 concise AI suggestions that help the parties carry out the plan respectfully.
-- List sensitive topics or trigger phrases that should be handled carefully in this plan.
+- Add a short mediator note explaining why this plan could work in warm, human language.
+- Add 3 concise AI suggestions that sound supportive and natural, like a thoughtful mediator coaching two real people.
+- Use plain everyday language, not robotic advice or therapy jargon.
+- Identify sensitive words or phrases only for inline highlighting in the summary/action plan. Do not make them look like a separate warning box.
 
 OUTPUT JSON:
 {
   "suggested_plan": {
     "title": "Suggested Resolution Plan Title (5-8 words)",
     "summary": "One paragraph summarizing the suggested resolution based on both parties selections",
-    "mediator_note": "2-3 sentences from the AI mediator explaining the reasoning behind this suggested plan",
+    "mediator_note": "2-3 warm, human sentences from the AI mediator explaining the reasoning behind this suggested plan",
     "ai_suggestions": [
-      "Short practical suggestion 1",
-      "Short practical suggestion 2",
-      "Short practical suggestion 3"
+      "Human, supportive suggestion 1",
+      "Human, supportive suggestion 2",
+      "Human, supportive suggestion 3"
     ],
     "sensitive_topics": ["Topic or phrase 1", "Topic or phrase 2"],
     "action_steps": [
@@ -2082,20 +2136,24 @@ TASK: Based on everything above — especially the negotiation feedback and what
 
 IMPORTANT:
 - Make the AI's role visible and useful to the user.
-- Add a short mediator note explaining why this final plan is likely to work.
-- Add 3 concise AI suggestions that help both parties follow the final plan successfully.
-- List sensitive topics or trigger phrases that should be handled carefully in this plan.
+- Add a short mediator note explaining why this final plan is likely to work in warm, human language.
+- Add 3 concise AI suggestions that sound supportive and natural, like a thoughtful mediator coaching two real people.
+- Use plain everyday language, not robotic advice or therapy jargon.
+- The final summary and action steps must feel noticeably updated if negotiation happened.
+- If the earlier plan was rejected or cancelled, explicitly reflect the requested changes and highlight those changed points inline.
+- Do not reuse the previous summary or action steps with only light rewording.
+- Identify sensitive words or phrases only for inline highlighting in the summary/action plan. Do not make them look like a separate warning box.
 
 OUTPUT JSON:
 {
   "final_plan": {
     "title": "Resolution Plan Title (5-8 words)",
     "summary": "One paragraph summarizing what both parties have agreed to",
-    "mediator_note": "2-3 sentences from the AI mediator explaining why this final plan fits the conversation and negotiation",
+    "mediator_note": "2-3 warm, human sentences from the AI mediator explaining why this final plan fits the conversation and negotiation",
     "ai_suggestions": [
-      "Short practical suggestion 1",
-      "Short practical suggestion 2",
-      "Short practical suggestion 3"
+      "Human, supportive suggestion 1",
+      "Human, supportive suggestion 2",
+      "Human, supportive suggestion 3"
     ],
     "sensitive_topics": ["Topic or phrase 1", "Topic or phrase 2"],
     "action_steps": [

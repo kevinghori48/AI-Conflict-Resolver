@@ -249,23 +249,25 @@ check(
   "controller decorates plans with highlighted HTML",
   CONTROLLER,
   "function decoratePlanWithHighlights(plan) {",
-  "'<mark class=\"sensitive-topic\">$1</mark>'"
+  "'<mark class=\"sensitive-topic\">$1</mark>'",
+  "sensitive_topics: [],"
 );
 
 check(
   "suggested plan prompt asks for AI-visible additions",
   CONTROLLER,
-  "Add a short mediator note explaining why this plan could work.",
-  "Add 3 concise AI suggestions that help the parties carry out the plan respectfully.",
-  "\"mediator_note\": \"2-3 sentences from the AI mediator explaining the reasoning behind this suggested plan\""
+  "Add a short mediator note explaining why this plan could work in warm, human language.",
+  "Add 3 concise AI suggestions that sound supportive and natural, like a thoughtful mediator coaching two real people.",
+  "\"mediator_note\": \"2-3 warm, human sentences from the AI mediator explaining the reasoning behind this suggested plan\""
 );
 
 check(
   "final plan prompt asks for AI-visible additions",
   CONTROLLER,
-  "Add a short mediator note explaining why this final plan is likely to work.",
-  "Add 3 concise AI suggestions that help both parties follow the final plan successfully.",
-  "\"mediator_note\": \"2-3 sentences from the AI mediator explaining why this final plan fits the conversation and negotiation\""
+  "Add a short mediator note explaining why this final plan is likely to work in warm, human language.",
+  "Add 3 concise AI suggestions that sound supportive and natural, like a thoughtful mediator coaching two real people.",
+  "Do not reuse the previous summary or action steps with only light rewording.",
+  "\"mediator_note\": \"2-3 warm, human sentences from the AI mediator explaining why this final plan fits the conversation and negotiation\""
 );
 
 check(
@@ -273,6 +275,14 @@ check(
   CONTROLLER,
   "dispute.suggested_plan = decoratePlanWithHighlights({",
   "dispute.final_plan = decoratePlanWithHighlights(result.final_plan);"
+);
+
+check(
+  "controller normalizes malformed plan output before save",
+  CONTROLLER,
+  "function normalizeCommitments(commitments) {",
+  "function normalizePlanOutput(plan) {",
+  "ai_suggestions: ensureStringArray(plan?.ai_suggestions).slice(0, 3),"
 );
 
 const skipLive = process.argv.includes("--skip-live");
