@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "nodemon src/server.js"
+    "dev": "nodemon src/server.js",
+    "test:audio-summary": "node src/test_changes.mjs",
+    "backfill:audio-transcripts": "node src/scripts/backfillAudioTranscripts.mjs"
   },
   "dependencies": {
     "@google/generative-ai": "^0.15.0",
