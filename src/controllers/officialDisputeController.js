@@ -61,6 +61,31 @@ export const cleanAIResponse = (text) => {
   throw new Error("AI returned invalid JSON format");
 };
 
+const AI_GENERATION_POLL_INTERVAL_MS = Number(process.env.AI_GENERATION_POLL_INTERVAL_MS || 500);
+const AI_GENERATION_WAIT_TIMEOUT_MS = Number(process.env.AI_GENERATION_WAIT_TIMEOUT_MS || 15000);
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function waitForGeneratedDisputeContent(disputeId, isReady, options = {}) {
+  const timeoutMs  = options.timeoutMs  ?? AI_GENERATION_WAIT_TIMEOUT_MS;
+  const intervalMs = options.intervalMs ?? AI_GENERATION_POLL_INTERVAL_MS;
+  const deadline   = Date.now() + timeoutMs;
+
+  let dispute = await OfficialDispute.findById(disputeId);
+
+  while (
+    dispute &&
+    !isReady(dispute) &&
+    dispute.status === "AI_SUMMARIZING" &&
+    Date.now() < deadline
+  ) {
+    await sleep(intervalMs);
+    dispute = await OfficialDispute.findById(disputeId);
+  }
+
+  return dispute;
+}
+
 // ─── Groq fallback (OpenAI-compatible API) ────────────────────────────────────
 // Called automatically when Gemini returns 503. Requires GROQ_API_KEY in .env
 // Get your free key at: https://console.groq.com
@@ -992,7 +1017,7 @@ export const getAISummary = async (req, res) => {
       return res.status(400).json({ message: "dispute_id is required" });
     }
 
-    const dispute = await OfficialDispute.findById(dispute_id);
+    let dispute = await OfficialDispute.findById(dispute_id);
     if (!dispute) return res.status(404).json({ message: "Dispute not found" });
 
     const isParticipant =
@@ -1003,7 +1028,19 @@ export const getAISummary = async (req, res) => {
       return res.status(403).json({ message: "You are not authorized to view this dispute" });
     }
 
-    if (!dispute.ai_summary || !dispute.ai_summary.summary_text) {
+    dispute = await waitForGeneratedDisputeContent(
+      dispute_id,
+      (d) => Boolean(d.ai_summary?.summary_text)
+    );
+
+    if (!dispute.ai_summary?.summary_text) {
+      if (dispute.status === "AI_SUMMARIZING") {
+        return res.status(202).json({
+          success: false,
+          status:  dispute.status,
+          message: "Summary is still being generated"
+        });
+      }
       return res.status(404).json({ message: "No summary available for this dispute" });
     }
 
@@ -1122,7 +1159,7 @@ export const getSolutions = async (req, res) => {
   try {
     const { dispute_id } = req.params;
 
-    const dispute = await OfficialDispute.findById(dispute_id);
+    let dispute = await OfficialDispute.findById(dispute_id);
     if (!dispute) return res.status(404).json({ message: "Dispute not found" });
 
     const isParticipant =
@@ -1131,7 +1168,19 @@ export const getSolutions = async (req, res) => {
 
     if (!isParticipant) return res.status(403).json({ message: "Not authorized" });
 
+    dispute = await waitForGeneratedDisputeContent(
+      dispute_id,
+      (d) => Array.isArray(d.solutions) && d.solutions.length > 0
+    );
+
     if (!dispute.solutions || dispute.solutions.length === 0) {
+      if (dispute.status === "AI_SUMMARIZING") {
+        return res.status(202).json({
+          success: false,
+          status:  dispute.status,
+          message: "Solutions are still being generated"
+        });
+      }
       return res.status(404).json({ message: "Solutions not generated yet" });
     }
 
@@ -1373,7 +1422,7 @@ export const getSuggestedPlan = async (req, res) => {
   try {
     const { dispute_id } = req.params;
 
-    const dispute = await OfficialDispute.findById(dispute_id);
+    let dispute = await OfficialDispute.findById(dispute_id);
     if (!dispute) return res.status(404).json({ message: "Dispute not found" });
 
     const isParticipant =
@@ -1382,20 +1431,32 @@ export const getSuggestedPlan = async (req, res) => {
 
     if (!isParticipant) return res.status(403).json({ message: "Not authorized" });
 
-    if (!dispute.suggested_plan || !dispute.suggested_plan.title) {
+    const isCreator = dispute.creator_id.toString() === req.user._id.toString();
+
+    dispute = await waitForGeneratedDisputeContent(
+      dispute_id,
+      (d) => Boolean(d.suggested_plan?.title)
+    );
+
+    if (!dispute.suggested_plan?.title) {
+      if (dispute.status === "AI_SUMMARIZING") {
+        return res.status(202).json({
+          success: false,
+          status:  dispute.status,
+          message: "Suggested plan is still being generated"
+        });
+      }
       return res.status(404).json({ message: "Suggested plan not generated yet" });
     }
 
-    const isCreator = dispute.creator_id.toString() === req.user._id.toString();
-
     res.json({
-      success: true,
+      success:        true,
       suggested_plan: dispute.suggested_plan,
-      status: dispute.status,
+      status:         dispute.status,
       approval: {
         creator_approved: dispute.suggested_plan_approval?.creator_approved || false,
-        joiner_approved: dispute.suggested_plan_approval?.joiner_approved || false,
-        your_approval: isCreator
+        joiner_approved:  dispute.suggested_plan_approval?.joiner_approved  || false,
+        your_approval:    isCreator
           ? dispute.suggested_plan_approval?.creator_approved
           : dispute.suggested_plan_approval?.joiner_approved
       }
@@ -2122,28 +2183,40 @@ export const getFinalPlan = async (req, res) => {
   try {
     const { dispute_id } = req.params;
 
-    const dispute = await OfficialDispute.findById(dispute_id);
+    let dispute = await OfficialDispute.findById(dispute_id);
     if (!dispute) return res.status(404).json({ message: "Dispute not found" });
 
     const isCreator = dispute.creator_id.toString() === req.user._id.toString();
-    const isJoiner = dispute.joiner_id?.toString() === req.user._id.toString();
+    const isJoiner  = dispute.joiner_id?.toString()  === req.user._id.toString();
 
     if (!isCreator && !isJoiner) {
       return res.status(403).json({ message: "You are not authorized to view this plan" });
     }
 
-    if (!dispute.final_plan || !dispute.final_plan.title) {
+    dispute = await waitForGeneratedDisputeContent(
+      dispute_id,
+      (d) => Boolean(d.final_plan?.title)
+    );
+
+    if (!dispute.final_plan?.title) {
+      if (dispute.status === "AI_SUMMARIZING") {
+        return res.status(202).json({
+          success: false,
+          status:  dispute.status,
+          message: "Final plan is still being generated"
+        });
+      }
       return res.status(404).json({ message: "Final plan not generated yet" });
     }
 
     res.json({
-      success: true,
-      status: dispute.status,
+      success:    true,
+      status:     dispute.status,
       final_plan: dispute.final_plan,
       approval: {
         creator_approved: dispute.final_plan_approval?.creator_approved || false,
-        joiner_approved: dispute.final_plan_approval?.joiner_approved || false,
-        your_approval: isCreator
+        joiner_approved:  dispute.final_plan_approval?.joiner_approved  || false,
+        your_approval:    isCreator
           ? dispute.final_plan_approval?.creator_approved
           : dispute.final_plan_approval?.joiner_approved
       }
