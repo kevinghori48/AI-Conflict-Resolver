@@ -80,6 +80,7 @@ const CONTROLLER = loadFile("controllers/officialDisputeController.js");
 const SOCKET = loadFile("socketHandlers/disputeSocketHandler.js");
 const GEMINI = loadFile("services/geminiService.js");
 const MESSAGE_MODEL = loadFile("models/DisputeMessage.js");
+const DISPUTE_MODEL = loadFile("models/OfficialDispute.js");
 
 for (const envPath of [
   path.resolve(__dirname, "../.env"),
@@ -161,6 +162,21 @@ check(
   "const transcript = await buildDisputeTranscriptForAI(messages, \"Person A\", \"Person B\");"
 );
 
+check(
+  "dispute_state includes normalized participant user payloads",
+  SOCKET,
+  "creator_user: creatorUser",
+  "joiner_user: joinerUser",
+  "current_user: currentUser",
+  "other_user: otherUser"
+);
+
+check(
+  "new_message emits explicit sender_user for text and audio",
+  SOCKET,
+  "sender_user: message.sender_id,"
+);
+
 section("4. Modality-neutral prompts");
 
 check(
@@ -210,9 +226,58 @@ check(
   "const geminiResult = await processAudioWithGemini(filePath);"
 );
 
+section("6. AI-visible plans and highlighted sensitive topics");
+
+check(
+  "suggested_plan schema stores AI-visible guidance fields",
+  DISPUTE_MODEL,
+  "mediator_note: String",
+  "ai_suggestions: [String]",
+  "sensitive_topics: [String]",
+  "summary_html: String",
+  "action_html: String"
+);
+
+check(
+  "final_plan schema stores AI-visible guidance fields",
+  DISPUTE_MODEL,
+  "commitments_html: {",
+  "success_criteria_html: String"
+);
+
+check(
+  "controller decorates plans with highlighted HTML",
+  CONTROLLER,
+  "function decoratePlanWithHighlights(plan) {",
+  "'<mark class=\"sensitive-topic\">$1</mark>'"
+);
+
+check(
+  "suggested plan prompt asks for AI-visible additions",
+  CONTROLLER,
+  "Add a short mediator note explaining why this plan could work.",
+  "Add 3 concise AI suggestions that help the parties carry out the plan respectfully.",
+  "\"mediator_note\": \"2-3 sentences from the AI mediator explaining the reasoning behind this suggested plan\""
+);
+
+check(
+  "final plan prompt asks for AI-visible additions",
+  CONTROLLER,
+  "Add a short mediator note explaining why this final plan is likely to work.",
+  "Add 3 concise AI suggestions that help both parties follow the final plan successfully.",
+  "\"mediator_note\": \"2-3 sentences from the AI mediator explaining why this final plan fits the conversation and negotiation\""
+);
+
+check(
+  "suggested and final plan save path uses highlighted decorator",
+  CONTROLLER,
+  "dispute.suggested_plan = decoratePlanWithHighlights({",
+  "dispute.final_plan = decoratePlanWithHighlights(result.final_plan);"
+);
+
 const skipLive = process.argv.includes("--skip-live");
 
-section("6. Optional live API sanity");
+section("7. Optional live API sanity");
 
 if (skipLive) {
   console.log(`  ${YELLOW}Skipped with --skip-live${RESET}`);

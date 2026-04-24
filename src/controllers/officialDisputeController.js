@@ -70,6 +70,67 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const getMessageSenderName = (msg, creatorName, joinerName) =>
   msg.sender_role === "creator" ? creatorName : joinerName;
 
+const escapeHtml = (value = "") =>
+  String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+const escapeRegex = (value = "") =>
+  String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const normalizeSensitiveTopics = (topics) =>
+  Array.isArray(topics)
+    ? [...new Set(
+        topics
+          .map((topic) => String(topic || "").trim())
+          .filter(Boolean)
+      )]
+    : [];
+
+function highlightSensitiveText(text, sensitiveTopics) {
+  const escapedText = escapeHtml(text || "");
+  if (!escapedText) return "";
+  if (!sensitiveTopics.length) return escapedText;
+
+  const pattern = sensitiveTopics
+    .sort((a, b) => b.length - a.length)
+    .map(escapeRegex)
+    .join("|");
+
+  if (!pattern) return escapedText;
+
+  return escapedText.replace(
+    new RegExp(`(${pattern})`, "gi"),
+    '<mark class="sensitive-topic">$1</mark>'
+  );
+}
+
+function decoratePlanWithHighlights(plan) {
+  const sensitiveTopics = normalizeSensitiveTopics(plan?.sensitive_topics);
+  const creatorCommitments = Array.isArray(plan?.commitments?.creator) ? plan.commitments.creator : [];
+  const joinerCommitments = Array.isArray(plan?.commitments?.joiner) ? plan.commitments.joiner : [];
+
+  return {
+    ...plan,
+    sensitive_topics: sensitiveTopics,
+    summary_html: highlightSensitiveText(plan?.summary || "", sensitiveTopics),
+    action_steps: Array.isArray(plan?.action_steps)
+      ? plan.action_steps.map((step) => ({
+          ...step,
+          action_html: highlightSensitiveText(step?.action || "", sensitiveTopics)
+        }))
+      : [],
+    commitments_html: {
+      creator: creatorCommitments.map((item) => highlightSensitiveText(item, sensitiveTopics)),
+      joiner: joinerCommitments.map((item) => highlightSensitiveText(item, sensitiveTopics))
+    },
+    success_criteria_html: highlightSensitiveText(plan?.success_criteria || "", sensitiveTopics)
+  };
+}
+
 function getMessageContentForAI(msg) {
   if (msg.message_type === "text") {
     return (msg.text_content || "").trim();
@@ -1389,11 +1450,24 @@ ${joinerSelectedSolutions.map(s => `- Option ${s.id}: ${s.title} — ${s.descrip
 
 TASK: Create a fair suggested resolution plan that balances both parties' selected solutions. This is a SUGGESTION — both parties will review it and can either accept it or negotiate further.
 
+IMPORTANT:
+- Make the AI's role visible and useful to the user.
+- Add a short mediator note explaining why this plan could work.
+- Add 3 concise AI suggestions that help the parties carry out the plan respectfully.
+- List sensitive topics or trigger phrases that should be handled carefully in this plan.
+
 OUTPUT JSON:
 {
   "suggested_plan": {
     "title": "Suggested Resolution Plan Title (5-8 words)",
     "summary": "One paragraph summarizing the suggested resolution based on both parties selections",
+    "mediator_note": "2-3 sentences from the AI mediator explaining the reasoning behind this suggested plan",
+    "ai_suggestions": [
+      "Short practical suggestion 1",
+      "Short practical suggestion 2",
+      "Short practical suggestion 3"
+    ],
+    "sensitive_topics": ["Topic or phrase 1", "Topic or phrase 2"],
     "action_steps": [
       {
         "step": 1,
@@ -1417,7 +1491,10 @@ OUTPUT JSON:
       throw new Error("Invalid suggested plan structure from AI");
     }
 
-    dispute.suggested_plan = { ...result.suggested_plan, generated_at: new Date() };
+    dispute.suggested_plan = decoratePlanWithHighlights({
+      ...result.suggested_plan,
+      generated_at: new Date()
+    });
     dispute.suggested_plan_approval = { creator_approved: false, joiner_approved: false };
     dispute.status = "SUGGESTED_PLAN_REVIEW";
     await dispute.save();
@@ -1427,7 +1504,7 @@ OUTPUT JSON:
       io.to(dispute._id.toString()).emit("suggested_plan_ready", {
         status: "SUGGESTED_PLAN_REVIEW",
         suggested_plan: dispute.suggested_plan,
-        message: "AI has suggested a resolution plan. Review and accept or start negotiation.",
+        message: "Your AI mediator suggested a resolution plan with guidance and sensitive-topic highlights.",
         timestamp: new Date()
       });
       console.log(`[EMIT] suggested_plan_ready | to room: ${dispute._id} | title: ${dispute.suggested_plan.title}`);
@@ -2003,11 +2080,24 @@ ${negotiationThread || "No additional comments were made — both parties agreed
 
 TASK: Based on everything above — especially the negotiation feedback and what was already rejected — construct a revised, fair, and actionable final resolution plan that addresses the parties' concerns.
 
+IMPORTANT:
+- Make the AI's role visible and useful to the user.
+- Add a short mediator note explaining why this final plan is likely to work.
+- Add 3 concise AI suggestions that help both parties follow the final plan successfully.
+- List sensitive topics or trigger phrases that should be handled carefully in this plan.
+
 OUTPUT JSON:
 {
   "final_plan": {
     "title": "Resolution Plan Title (5-8 words)",
     "summary": "One paragraph summarizing what both parties have agreed to",
+    "mediator_note": "2-3 sentences from the AI mediator explaining why this final plan fits the conversation and negotiation",
+    "ai_suggestions": [
+      "Short practical suggestion 1",
+      "Short practical suggestion 2",
+      "Short practical suggestion 3"
+    ],
+    "sensitive_topics": ["Topic or phrase 1", "Topic or phrase 2"],
     "action_steps": [
       {
         "step": 1,
@@ -2031,7 +2121,7 @@ OUTPUT JSON:
       throw new Error("Invalid final plan structure from AI");
     }
 
-    dispute.final_plan = result.final_plan;
+    dispute.final_plan = decoratePlanWithHighlights(result.final_plan);
     dispute.status = "FINAL_PLAN_REVIEW";
     await dispute.save();
     console.log(`[generateFinalPlan] [SAVE] status → FINAL_PLAN_REVIEW | dispute: ${dispute._id}`);
@@ -2040,7 +2130,7 @@ OUTPUT JSON:
       io.to(dispute_id).emit("final_plan_ready", {
         status: "FINAL_PLAN_REVIEW",
         final_plan: dispute.final_plan,
-        message: "Final resolution plan is ready. Please review and approve.",
+        message: "Your AI mediator prepared the final plan with follow-through suggestions and sensitive-topic highlights.",
         timestamp: new Date()
       });
       console.log(`[EMIT] final_plan_ready | to room: ${dispute_id} | title: ${dispute.final_plan.title}`);

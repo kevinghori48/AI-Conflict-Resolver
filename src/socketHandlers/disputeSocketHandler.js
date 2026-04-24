@@ -101,10 +101,39 @@ export const setupDisputeSocket = (io) => {
       socket.currentDispute = roomId;
       socket.userRole = isCreator ? "creator" : "joiner";
 
+      const creatorUser = dispute.creator_id
+        ? {
+            _id: dispute.creator_id._id,
+            firstName: dispute.creator_id.firstName,
+            lastName: dispute.creator_id.lastName,
+            email: dispute.creator_id.email,
+            avatarId: dispute.creator_id.avatarId ?? null,
+            gender: dispute.creator_id.gender ?? null
+          }
+        : null;
+
+      const joinerUser = dispute.joiner_id
+        ? {
+            _id: dispute.joiner_id._id,
+            firstName: dispute.joiner_id.firstName,
+            lastName: dispute.joiner_id.lastName,
+            email: dispute.joiner_id.email,
+            avatarId: dispute.joiner_id.avatarId ?? null,
+            gender: dispute.joiner_id.gender ?? null
+          }
+        : null;
+
+      const currentUser = isCreator ? creatorUser : joinerUser;
+      const otherUser = isCreator ? joinerUser : creatorUser;
+
       console.log(`${socket.user.email} joined room ${roomId} as ${socket.userRole}`);
 
       socket.emit("dispute_state", {
         dispute,
+        creator_user: creatorUser,
+        joiner_user: joinerUser,
+        current_user: currentUser,
+        other_user: otherUser,
         user_role: socket.userRole,
         is_creator: isCreator,
         is_joiner: isJoiner,
@@ -268,13 +297,14 @@ export const setupDisputeSocket = (io) => {
         await dispute.save();
         await message.populate('sender_id', 'firstName lastName email avatarId gender');
 
-        if (callback) callback({ success: true, message, timestamp: new Date() });
+          if (callback) callback({ success: true, message, timestamp: new Date() });
 
-        io.to(dispute_id).emit("new_message", {
-          message,
-          sender_role: senderRole,
-          timestamp: new Date()
-        });
+          io.to(dispute_id).emit("new_message", {
+            message,
+            sender_user: message.sender_id,
+            sender_role: senderRole,
+            timestamp: new Date()
+          });
         console.log(`[EMIT] new_message | to room: ${dispute_id} | sender: ${socket.user.email} (${senderRole})`);
 
       } catch (error) {
@@ -371,6 +401,7 @@ export const setupDisputeSocket = (io) => {
 
         io.to(dispute_id).emit("new_message", {
           message,
+          sender_user: message.sender_id,
           audio_url: audioUrl,
           sender_role: senderRole,
           audio_count: dispute.conversation.audio_count,

@@ -118,9 +118,14 @@ const officialDisputeSchema = new mongoose.Schema({
   suggested_plan: {
     title: String,
     summary: String,
+    summary_html: String,
+    mediator_note: String,
+    ai_suggestions: [String],
+    sensitive_topics: [String],
     action_steps: [{
       step: Number,
       action: String,
+      action_html: String,
       responsible: String,
       timeframe: String
     }],
@@ -128,7 +133,12 @@ const officialDisputeSchema = new mongoose.Schema({
       creator: [String],
       joiner: [String]
     },
+    commitments_html: {
+      creator: [String],
+      joiner: [String]
+    },
     success_criteria: String,
+    success_criteria_html: String,
     generated_at: Date
   },
   suggested_plan_approval: {
@@ -157,9 +167,14 @@ const officialDisputeSchema = new mongoose.Schema({
   final_plan: {
     title: String,
     summary: String,
+    summary_html: String,
+    mediator_note: String,
+    ai_suggestions: [String],
+    sensitive_topics: [String],
     action_steps: [{
       step: Number,
       action: String,
+      action_html: String,
       responsible: { type: String, enum: ["creator", "joiner", "both"] },
       timeframe: String
     }],
@@ -167,7 +182,12 @@ const officialDisputeSchema = new mongoose.Schema({
       creator: [String],
       joiner: [String]
     },
-    success_criteria: String
+    commitments_html: {
+      creator: [String],
+      joiner: [String]
+    },
+    success_criteria: String,
+    success_criteria_html: String
   },
 
   // Both must approve the final plan to complete the dispute.
