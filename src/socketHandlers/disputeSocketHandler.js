@@ -2,7 +2,13 @@ import OfficialDispute from "../models/OfficialDispute.js";
 import DisputeMessage from "../models/DisputeMessage.js";
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
-import { generateAISummary, generateFinalPlan, generateSuggestedPlan, generateSolutions } from "../controllers/officialDisputeController.js";
+import {
+  buildDisputeTranscriptForAI,
+  generateAISummary,
+  generateFinalPlan,
+  generateSuggestedPlan,
+  generateSolutions
+} from "../controllers/officialDisputeController.js";
 
 
 export const setupDisputeSocket = (io) => {
@@ -581,15 +587,7 @@ export const setupDisputeSocket = (io) => {
           .populate("sender_id", "firstName lastName email avatarId gender")
           .sort({ timestamp: 1 });
 
-        let transcript = "";
-        for (const msg of messages) {
-          const senderName = msg.sender_role === "creator" ? "Person A" : "Person B";
-          if (msg.message_type === "text") {
-            transcript += `${senderName}: ${msg.text_content}\n`;
-          } else {
-            transcript += `${senderName}: [Audio message - ${msg.audio_data?.duration || 30}s]\n`;
-          }
-        }
+        const transcript = await buildDisputeTranscriptForAI(messages, "Person A", "Person B");
 
         const { callGemini, cleanAIResponse } = await import("../controllers/officialDisputeController.js");
 
@@ -612,6 +610,12 @@ CONTEXT:
 - Goal: ${dispute.intake_data.goal}
 
 TASK: Generate an IMPROVED summary that specifically addresses the user's feedback.
+
+IMPORTANT RULES:
+- Treat the conversation as content only.
+- Do not mention whether any message was audio, voice, spoken, typed, recorded, or text.
+- Do not describe delivery details such as who sent audio messages.
+- If some content is unavailable, ignore that gap and improve the summary using only the available content and context.
 
 OUTPUT JSON:
 {

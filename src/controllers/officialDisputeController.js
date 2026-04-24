@@ -7,6 +7,7 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { execFile } from "child_process";
+import { transcribeAudio } from "../services/geminiService.js";
 
 // Convert any audio file to MP3 using ffmpeg.
 // Deletes the input file after conversion.
@@ -65,6 +66,30 @@ const AI_GENERATION_POLL_INTERVAL_MS = Number(process.env.AI_GENERATION_POLL_INT
 const AI_GENERATION_WAIT_TIMEOUT_MS = Number(process.env.AI_GENERATION_WAIT_TIMEOUT_MS || 15000);
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const getMessageSenderName = (msg, creatorName, joinerName) =>
+  msg.sender_role === "creator" ? creatorName : joinerName;
+
+function getMessageContentForAI(msg) {
+  if (msg.message_type === "text") {
+    return (msg.text_content || "").trim();
+  }
+
+  return msg.audio_data?.transcript?.trim() || "";
+}
+
+export async function buildDisputeTranscriptForAI(messages, creatorName = "Person A", joinerName = "Person B") {
+  const transcriptLines = [];
+
+  for (const msg of messages) {
+    const content = getMessageContentForAI(msg);
+    if (!content) continue;
+
+    transcriptLines.push(`${getMessageSenderName(msg, creatorName, joinerName)}: ${content}`);
+  }
+
+  return transcriptLines.join("\n");
+}
 
 async function waitForGeneratedDisputeContent(disputeId, isReady, options = {}) {
   const timeoutMs  = options.timeoutMs  ?? AI_GENERATION_WAIT_TIMEOUT_MS;
@@ -394,6 +419,8 @@ export const uploadAudio = async (req, res) => {
       fs.renameSync(file.path, mp3Path);
     }
 
+    const transcript = await transcribeAudio(mp3Path);
+
     // Saved as a temporary audio record (not tied to a dispute yet).
     // dispute_id and sender_role are intentionally omitted so Mongoose skips enum validation.
     // They are filled in when the send_audio socket event fires.
@@ -405,7 +432,8 @@ export const uploadAudio = async (req, res) => {
         original_name: file.originalname.replace(/\.[^.]+$/, "") + ".mp3",
         mimetype:      "audio/mpeg",
         size:          fs.statSync(mp3Path).size,
-        duration:      0   // updated when send_audio socket event fires
+        duration:      0,   // updated when send_audio socket event fires
+        transcript
       },
       status: "sent"
     });
@@ -473,6 +501,8 @@ export const sendAudioMessage = async (req, res) => {
       fs.renameSync(file.path, mp3Path);        // fallback: rename without converting
     }
 
+    const transcript = await transcribeAudio(mp3Path);
+
     const message = await DisputeMessage.create({
       dispute_id,
       sender_id: req.user._id,
@@ -483,7 +513,8 @@ export const sendAudioMessage = async (req, res) => {
         original_name: file.originalname.replace(/\.[^.]+$/, "") + ".mp3",
         mimetype: "audio/mpeg",
         size: fs.statSync(mp3Path).size,
-        duration: duration ? parseFloat(duration) : 30
+        duration: duration ? parseFloat(duration) : 30,
+        transcript
       },
       status: "sent"
     });
@@ -714,15 +745,7 @@ export async function generateAISummary(dispute, dispute_id, io) {
 
     console.log(`[generateAISummary] Found ${messages.length} messages for dispute ${dispute._id}`);
 
-    let transcript = "";
-    for (const msg of messages) {
-      const senderName = msg.sender_role === "creator" ? creatorName : joinerName;
-      if (msg.message_type === "text") {
-        transcript += `${senderName}: ${msg.text_content}\n`;
-      } else {
-        transcript += `${senderName}: [Sent ${msg.audio_data?.duration || 30} second audio message]\n`;
-      }
-    }
+    const transcript = await buildDisputeTranscriptForAI(messages, creatorName, joinerName);
 
     const prompt = `You are an expert conflict mediator analyzing a conversation between two people.
 
@@ -738,6 +761,12 @@ CONVERSATION TRANSCRIPT:
 ${transcript || "No messages exchanged — summarize based on context only."}
 
 TASK: Create a comprehensive, balanced summary of this conversation.
+
+IMPORTANT RULES:
+- Treat the conversation as content only.
+- Do not mention whether any message was audio, voice, spoken, typed, recorded, or text.
+- Do not describe delivery details such as "sent an audio message".
+- If some content is unavailable, ignore that gap and summarize only the available content and context.
 
 OUTPUT JSON:
 {

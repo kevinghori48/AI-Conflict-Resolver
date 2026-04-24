@@ -2,6 +2,69 @@ import fs from "fs";
 import genAI from "../utils/gemini.js";
 import path from "path";
 
+const getAudioMimeType = (filePath) => {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === ".wav") return "audio/wav";
+  if (ext === ".m4a") return "audio/m4a";
+  if (ext === ".ogg") return "audio/ogg";
+  if (ext === ".webm") return "audio/webm";
+  return "audio/mpeg";
+};
+
+const parseJsonResponse = (text) => {
+  try {
+    return JSON.parse(text);
+  } catch (_) {}
+
+  const cleaned = text.replace(/```json/gi, "").replace(/```/g, "").trim();
+  try {
+    return JSON.parse(cleaned);
+  } catch (_) {}
+
+  const objectMatch = cleaned.match(/\{[\s\S]*\}/);
+  if (objectMatch) {
+    try {
+      return JSON.parse(objectMatch[0]);
+    } catch (_) {}
+  }
+
+  return null;
+};
+
+async function transcribeAudioWithGroq(filePath) {
+  if (!process.env.GROQ_API_KEY) {
+    throw new Error("GROQ_API_KEY not set");
+  }
+
+  const audioBuffer = await fs.promises.readFile(filePath);
+  const form = new FormData();
+  form.append(
+    "file",
+    new Blob([audioBuffer], { type: getAudioMimeType(filePath) }),
+    path.basename(filePath)
+  );
+  form.append("model", "whisper-large-v3-turbo");
+  form.append("response_format", "verbose_json");
+  form.append("language", "en");
+  form.append("temperature", "0");
+
+  const response = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.GROQ_API_KEY}`
+    },
+    body: form
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Groq transcription failed (${response.status}): ${errorText}`);
+  }
+
+  const data = await response.json();
+  return typeof data?.text === "string" ? data.text.trim() : "";
+}
+
 export const processAudioWithGemini = async (filePath) => {
   try {
     // 1. Load audio file as base64
@@ -77,4 +140,30 @@ Follow this EXACT JSON structure with valid JSON only.
     console.error("Gemini processing error:", err);
     return { error: "Gemini failed to process audio" };
   }
+};
+
+export const transcribeAudio = async (filePath) => {
+  try {
+    const groqTranscript = await transcribeAudioWithGroq(filePath);
+    if (groqTranscript) return groqTranscript;
+  } catch (error) {
+    console.error("Groq transcription error:", error.message);
+  }
+
+  try {
+    const geminiResult = await processAudioWithGemini(filePath);
+    if (typeof geminiResult?.transcript === "string" && geminiResult.transcript.trim()) {
+      return geminiResult.transcript.trim();
+    }
+    if (typeof geminiResult?.raw === "string") {
+      const parsed = parseJsonResponse(geminiResult.raw);
+      if (typeof parsed?.transcript === "string" && parsed.transcript.trim()) {
+        return parsed.transcript.trim();
+      }
+    }
+  } catch (error) {
+    console.error("Gemini transcription fallback error:", error.message);
+  }
+
+  return null;
 };

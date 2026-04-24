@@ -28,7 +28,8 @@ const disputeMessageSchema = new mongoose.Schema({
     original_name: String,
     mimetype: String,
     size: Number,
-    duration: Number // in seconds
+    duration: Number, // in seconds
+    transcript: String
   },
 
   // Message status (WhatsApp-like)
