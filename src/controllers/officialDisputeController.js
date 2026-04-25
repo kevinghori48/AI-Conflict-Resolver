@@ -10,7 +10,6 @@ import { execFile } from "child_process";
 import { transcribeAudio } from "../services/geminiService.js";
 
 // Convert any audio file to MP3 using ffmpeg.
-// Deletes the input file after conversion.
 const FFMPEG_PATH = process.env.FFMPEG_PATH || "ffmpeg";
 const convertToMp3 = (inputPath, outputPath) =>
   new Promise((resolve, reject) => {
