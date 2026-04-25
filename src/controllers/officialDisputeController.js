@@ -91,6 +91,16 @@ const normalizeSensitiveTopics = (topics) =>
 
 const ensureString = (value) => String(value || "").trim();
 
+const stripMarkdown = (value = "") =>
+  String(value)
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/\*(.*?)\*/g, "$1")
+    .replace(/__(.*?)__/g, "$1")
+    .replace(/_(.*?)_/g, "$1")
+    .replace(/`(.*?)`/g, "$1")
+    .replace(/\[(.*?)\]\((.*?)\)/g, "$1")
+    .trim();
+
 const ensureStringArray = (value) => {
   if (Array.isArray(value)) {
     return value.map(ensureString).filter(Boolean);
@@ -142,21 +152,84 @@ function normalizePlanOutput(plan) {
 }
 
 function highlightSensitiveText(text, sensitiveTopics) {
-  const escapedText = escapeHtml(text || "");
-  if (!escapedText) return "";
-  if (!sensitiveTopics.length) return escapedText;
+  const cleanText = stripMarkdown(text || "");
+  if (!cleanText) return "";
+  if (!sensitiveTopics.length) return escapeHtml(cleanText);
 
-  const pattern = sensitiveTopics
-    .sort((a, b) => b.length - a.length)
-    .map(escapeRegex)
-    .join("|");
+  const normalizedTopics = sensitiveTopics
+    .map((topic) => stripMarkdown(topic))
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
 
-  if (!pattern) return escapedText;
+  if (!normalizedTopics.length) return escapeHtml(cleanText);
 
-  return escapedText.replace(
-    new RegExp(`(${pattern})`, "gi"),
-    '<mark class="sensitive-topic">$1</mark>'
-  );
+  const lowerText = cleanText.toLowerCase();
+  const ranges = [];
+
+  for (const topic of normalizedTopics) {
+    const lowerTopic = topic.toLowerCase();
+    const matchIndex = lowerText.indexOf(lowerTopic);
+    if (matchIndex === -1) continue;
+
+    let start = matchIndex;
+    let end = matchIndex + topic.length;
+
+    const leftBoundary = Math.max(
+      cleanText.lastIndexOf(". ", matchIndex),
+      cleanText.lastIndexOf("! ", matchIndex),
+      cleanText.lastIndexOf("? ", matchIndex),
+      cleanText.lastIndexOf(", ", matchIndex),
+      cleanText.lastIndexOf("; ", matchIndex)
+    );
+
+    if (leftBoundary >= 0) {
+      start = leftBoundary + 2;
+    } else {
+      start = Math.max(0, cleanText.lastIndexOf(" ", matchIndex - 1) + 1);
+    }
+
+    const rightCandidates = [
+      cleanText.indexOf(". ", end),
+      cleanText.indexOf("! ", end),
+      cleanText.indexOf("? ", end),
+      cleanText.indexOf(", ", end),
+      cleanText.indexOf("; ", end)
+    ].filter((idx) => idx >= 0);
+
+    if (rightCandidates.length > 0) {
+      end = Math.min(...rightCandidates);
+    } else {
+      const nextSpace = cleanText.indexOf(" ", end);
+      end = nextSpace >= 0 ? nextSpace : cleanText.length;
+    }
+
+    ranges.push({ start, end });
+  }
+
+  if (!ranges.length) return escapeHtml(cleanText);
+
+  ranges.sort((a, b) => a.start - b.start);
+  const mergedRanges = [];
+  for (const range of ranges) {
+    const previous = mergedRanges[mergedRanges.length - 1];
+    if (!previous || range.start > previous.end) {
+      mergedRanges.push({ ...range });
+    } else {
+      previous.end = Math.max(previous.end, range.end);
+    }
+  }
+
+  let output = "";
+  let cursor = 0;
+
+  for (const range of mergedRanges) {
+    output += escapeHtml(cleanText.slice(cursor, range.start));
+    output += `<span class="highlighted-fragment">${escapeHtml(cleanText.slice(range.start, range.end).trim())}</span>`;
+    cursor = range.end;
+  }
+
+  output += escapeHtml(cleanText.slice(cursor));
+  return output;
 }
 
 function decoratePlanWithHighlights(plan) {

@@ -249,7 +249,8 @@ check(
   "controller decorates plans with highlighted HTML",
   CONTROLLER,
   "function decoratePlanWithHighlights(plan) {",
-  "'<mark class=\"sensitive-topic\">$1</mark>'",
+  "const stripMarkdown = (value = \"\") =>",
+  "<span class=\"highlighted-fragment\">",
   "sensitive_topics: [],"
 );
 
