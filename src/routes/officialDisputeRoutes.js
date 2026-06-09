@@ -69,8 +69,9 @@ router.post(
   "/analyze-multimodal",
   auth,
   upload.fields([
-    { name: "summary", maxCount: 1 },
-    { name: "uploads", maxCount: 10 }
+    { name: "summary_audio", maxCount: 1 },
+    { name: "image", maxCount: 10 },
+    { name: "audio", maxCount: 10 }
   ]),
   controller.analyzeMultimodalDispute
 );

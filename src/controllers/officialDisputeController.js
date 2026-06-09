@@ -2879,8 +2879,11 @@ export const deleteDispute = async (req, res) => {
 export const analyzeMultimodalDispute = async (req, res) => {
   try {
     const summaryText = req.body.summary_text || req.body.summaryText || "";
-    const summaryAudioFile = req.files?.["summary"]?.[0];
-    const mediaFiles = req.files?.["uploads"] || [];
+    const summaryAudioFile = req.files?.["summary_audio"]?.[0];
+    const mediaFiles = [
+      ...(req.files?.["image"] || []),
+      ...(req.files?.["audio"] || [])
+    ];
 
     if (!summaryText && !summaryAudioFile && mediaFiles.length === 0) {
       return res.status(400).json({
