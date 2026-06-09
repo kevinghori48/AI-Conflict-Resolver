@@ -2076,10 +2076,44 @@ OUTPUT JSON:
       }
     });
 
-    requireAuth("send_multimodal_ai_message", async ({ analysis_id, message }, callback) => {
+    requireAuth("send_multimodal_ai_message", async ({ analysis_id, message, audio_id }, callback) => {
       try {
-        if (!analysis_id || !message?.trim()) {
-          if (callback) callback({ success: false, message: "analysis_id and non-empty message are required" });
+        if (!analysis_id) {
+          if (callback) callback({ success: false, message: "analysis_id is required" });
+          return;
+        }
+
+        let userMessage = "";
+        
+        if (audio_id) {
+          const audioMsg = await DisputeMessage.findById(audio_id);
+          if (!audioMsg || audioMsg.message_type !== "audio") {
+            const errRes = { success: false, message: "Audio message not found. Upload it first via POST /official-dispute/upload/audio" };
+            if (callback) callback(errRes);
+            return;
+          }
+
+          if (audioMsg.sender_id.toString() !== socket.userId) {
+            const errRes = { success: false, message: "This audio was not uploaded by you" };
+            if (callback) callback(errRes);
+            return;
+          }
+
+          const transcript = audioMsg.audio_data?.transcript || "";
+          if (!transcript.trim()) {
+            const errRes = { success: false, message: "Could not transcribe audio content" };
+            if (callback) callback(errRes);
+            return;
+          }
+          userMessage = transcript.trim();
+        }
+
+        if (message?.trim()) {
+          userMessage = userMessage ? `${userMessage}\n\nAdditional text: ${message.trim()}` : message.trim();
+        }
+
+        if (!userMessage) {
+          if (callback) callback({ success: false, message: "Either message or audio_id is required" });
           return;
         }
 
@@ -2094,7 +2128,7 @@ OUTPUT JSON:
           chat = await MultimodalChat.create({ user_id: socket.userId, analysis_id, messages: [] });
         }
 
-        chat.messages.push({ role: "user", content: message.trim() });
+        chat.messages.push({ role: "user", content: userMessage });
 
         const recentHistory = chat.messages
           .slice(-10)
@@ -2130,12 +2164,13 @@ OUTPUT JSON:
         chat.messages.push({ role: "model", content: aiReply });
         await chat.save();
 
-        if (callback) callback({ success: true, reply: aiReply, chat });
+        if (callback) callback({ success: true, user_message: userMessage, reply: aiReply, chat });
         
         socket.emit("multimodal_ai_reply", {
           analysis_id,
           role: "model",
           content: aiReply,
+          user_message: userMessage,
           timestamp: new Date()
         });
       } catch (err) {
