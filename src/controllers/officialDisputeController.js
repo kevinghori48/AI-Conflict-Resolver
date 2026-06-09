@@ -2900,10 +2900,6 @@ export const analyzeMultimodalDispute = async (req, res) => {
     }));
 
     const analysis = await MultimodalAnalysis.create({
-      user_id: req.user._id,
-      summary_text: summaryText || undefined,
-      summary_audio_url: summaryAudioFile ? summaryAudioFile.path : undefined,
-      uploaded_media: uploadedMedia,
       ai_summary: aiSummary
     });
 
