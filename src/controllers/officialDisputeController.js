@@ -2527,20 +2527,20 @@ export const getUserDisputes = async (req, res) => {
       limit = 10
     } = req.query;
 
-    // If type is provided, validate it
-    if (type && !["major", "minor", "call"].includes(type)) {
-      return res.status(400).json({ message: "Invalid type. Must be one of: major, minor, call" });
+    if (type && !["major", "minor", "call", "multimodal"].includes(type)) {
+      return res.status(400).json({ message: "Invalid type. Must be one of: major, minor, call, multimodal" });
     }
 
     const pageNum = Math.max(1, parseInt(page));
     const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
     const skip = (pageNum - 1) * limitNum;
 
-    // No type provided — return all disputes from all 3 collections combined
+    // No type provided — return all disputes from all 4 collections combined
     if (!type) {
       const majorQuery = { $or: [{ creator_id: req.user._id }, { joiner_id: req.user._id }] };
       const minorQuery = { $or: [{ creator_id: req.user._id }, { joiner_id: req.user._id }] };
       const callQuery = { user_id: req.user._id };
+      const multimodalQuery = { user_id: req.user._id };
 
       if (startDate) {
         const from = new Date(startDate);
@@ -2548,10 +2548,11 @@ export const getUserDisputes = async (req, res) => {
           majorQuery.createdAt = { $gte: from };
           minorQuery.createdAt = { $gte: from };
           callQuery.createdAt = { $gte: from };
+          multimodalQuery.createdAt = { $gte: from };
         }
       }
 
-      const [majorDisputes, minorDisputes, callReports] = await Promise.all([
+      const [majorDisputes, minorDisputes, callReports, multimodalAnalyses] = await Promise.all([
         OfficialDispute.find(majorQuery)
           .populate("creator_id", "firstName lastName email avatarId gender")
           .populate("joiner_id", "firstName lastName email avatarId gender")
@@ -2562,6 +2563,8 @@ export const getUserDisputes = async (req, res) => {
           .populate("joiner_id", "firstName lastName email avatarId gender")
           .sort({ createdAt: -1 }),
         Report.find(callQuery)
+          .sort({ createdAt: -1 }),
+        MultimodalAnalysis.find(multimodalQuery)
           .sort({ createdAt: -1 })
       ]);
 
@@ -2597,10 +2600,16 @@ export const getUserDisputes = async (req, res) => {
           conflict_score: r.conflict_score,
           objective: r.objective,
           createdAt: r.createdAt
+        })),
+        ...multimodalAnalyses.map(m => ({
+          _id: m._id,
+          type: "multimodal",
+          summary_text: m.summary_text || null,
+          main_topic: m.ai_summary?.conflict_snapshot?.main_disagreement || m.ai_summary?.short_summary || "Multimodal Analysis",
+          createdAt: m.createdAt
         }))
       ].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
-      // Apply pagination on combined results
       const total = allDisputes.length;
       const totalPages = Math.ceil(total / limitNum);
       const paginated = allDisputes.slice(skip, skip + limitNum);
@@ -2754,6 +2763,44 @@ export const getUserDisputes = async (req, res) => {
       });
     }
 
+    // ── MULTIMODAL (MultimodalAnalysis) ───────────────────────────────────────
+    if (type === "multimodal") {
+      const query = { user_id: req.user._id };
+
+      if (startDate) {
+        const from = new Date(startDate);
+        if (!isNaN(from)) query.createdAt = { $gte: from };
+      }
+
+      const [analyses, total] = await Promise.all([
+        MultimodalAnalysis.find(query)
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limitNum),
+        MultimodalAnalysis.countDocuments(query)
+      ]);
+
+      const totalPages = Math.ceil(total / limitNum);
+
+      return res.json({
+        success: true,
+        type: "multimodal",
+        count: analyses.length,
+        total,
+        page: pageNum,
+        total_pages: totalPages,
+        has_next: pageNum < totalPages,
+        has_prev: pageNum > 1,
+        disputes: analyses.map(m => ({
+          _id: m._id,
+          type: "multimodal",
+          summary_text: m.summary_text || null,
+          main_topic: m.ai_summary?.conflict_snapshot?.main_disagreement || m.ai_summary?.short_summary || "Multimodal Analysis",
+          createdAt: m.createdAt
+        }))
+      });
+    }
+
   } catch (err) {
     console.error("Get user disputes error:", err);
     res.status(500).json({ message: "Failed to fetch disputes", error: err.message });
@@ -2761,7 +2808,6 @@ export const getUserDisputes = async (req, res) => {
 };
 
 // DETAIL PAGE: Full dispute info for a single dispute
-// Checks all 3 collections — major (OfficialDispute), minor (SmallDispute), call (Report)
 export const getMyDisputeDetails = async (req, res) => {
   try {
     const { dispute_id } = req.params;
@@ -2825,6 +2871,21 @@ export const getMyDisputeDetails = async (req, res) => {
         success: true,
         type: "call",
         dispute: report
+      });
+    }
+
+    // ── MULTIMODAL (MultimodalAnalysis) ───────────────────────────────────────
+    const multimodal = await MultimodalAnalysis.findById(dispute_id);
+
+    if (multimodal) {
+      if (multimodal.user_id.toString() !== req.user._id.toString()) {
+        return res.status(403).json({ message: "You are not authorized to view this analysis" });
+      }
+
+      return res.json({
+        success: true,
+        type: "multimodal",
+        dispute: multimodal
       });
     }
 
@@ -2894,8 +2955,9 @@ export const analyzeMultimodalDispute = async (req, res) => {
 
     const aiSummary = await analyzeMultimodalContent(summaryText, summaryAudioFile, mediaFiles);
     const shortSummary = aiSummary?.short_summary || "";
-    if (aiSummary && aiSummary.short_summary) {
-      delete aiSummary.short_summary;
+    const responseSummary = { ...aiSummary };
+    if (responseSummary.short_summary) {
+      delete responseSummary.short_summary;
     }
 
     const uploadedMedia = mediaFiles.map(file => ({
@@ -2914,7 +2976,7 @@ export const analyzeMultimodalDispute = async (req, res) => {
     return res.json({
       success: true,
       message: "Multimodal dispute analyzed successfully.",
-      ai_summary: aiSummary,
+      ai_summary: responseSummary,
       short_summary: shortSummary,
       analysis_id: analysis._id
     });
