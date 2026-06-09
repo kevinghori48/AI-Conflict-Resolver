@@ -181,7 +181,7 @@ export const analyzeMultimodalContent = async (summaryText, summaryAudioFile, me
     parts.push({
       text: `You are a dispute and conflict analysis helper. Please analyze the provided text description, audio recordings, and any attached images/audio files together. Generate a SINGLE, unified, and concise summary report that combines all of these inputs into one cohesive situation. Do NOT separate them into different conflict sections. Treat the text description as the primary explanation and the attached files (images/audios) as the supporting evidence/context for that same conflict. Stick strictly to the visible/stated facts and explain the overall situation.
 
-CRITICAL: Your output MUST be in valid JSON conforming to the following structure:
+CRITICAL: Your output MUST be in valid JSON conforming to the following structure. Generate fully custom, dynamic, and context-specific values based on your analysis of this specific conflict. Do NOT repeat or copy the example placeholder text verbatim:
 {
   "conflict_snapshot": {
     "main_disagreement": "Brief description of the main disagreement based on the inputs",
@@ -192,13 +192,14 @@ CRITICAL: Your output MUST be in valid JSON conforming to the following structur
     "overall_tone": "Overall tone of conversation (e.g. calm, defensive, angry, misunderstood, tense)"
   },
   "key_insights": [
-    "Identify 2-3 important patterns or insights from the conversation/evidence (e.g., 'You seem to be seeking reassurance, while your partner is seeking more independence.')"
+    "Custom pattern or insight 1 detected from this conversation/evidence",
+    "Custom pattern or insight 2 detected from this conversation/evidence"
   ],
-  "hidden_tension": "One interesting hidden insight or underlying tension not explicitly mentioned (e.g., 'There may be an underlying trust concern that neither side explicitly mentioned.')",
+  "hidden_tension": "One interesting custom hidden insight or underlying tension not explicitly mentioned in this conflict",
   "what_happens_next": [
-    "Teaser 1 (e.g., 'I\\'ve identified 4 communication patterns contributing to this conflict.')",
-    "Teaser 2 (e.g., 'There are 3 possible resolution paths based on the conversation.')",
-    "Teaser 3 (e.g., 'I can help you draft a response that reduces tension and improves understanding.')"
+    "A custom teaser about identified communication patterns specific to this conflict (e.g., 'I\\'ve identified N communication patterns contributing to this conflict.')",
+    "A custom teaser about possible resolution paths specific to this conflict (e.g., 'There are N possible resolution paths based on the conversation.')",
+    "A custom teaser about drafting responses or reducing tension specific to this conflict"
   ]
 }`
     });
