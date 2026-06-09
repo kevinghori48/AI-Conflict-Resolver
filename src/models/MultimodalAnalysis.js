@@ -20,7 +20,7 @@ const multimodalAnalysisSchema = new mongoose.Schema({
     type: Object,
     required: true
   },
-  title: {
+  dispute_name: {
     type: String
   },
   status: {

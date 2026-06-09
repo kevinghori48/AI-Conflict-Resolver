@@ -2604,7 +2604,7 @@ export const getUserDisputes = async (req, res) => {
         ...multimodalAnalyses.map(m => ({
           _id: m._id,
           type: "multimodal",
-          title: m.title || m.ai_summary?.title || "Multimodal Dispute",
+          dispute_name: m.dispute_name || m.ai_summary?.dispute_name || "Multimodal Dispute",
           status: m.status || "ai_summary",
           summary_text: m.summary_text || null,
           main_topic: m.ai_summary?.conflict_snapshot?.main_disagreement || m.ai_summary?.short_summary || "Multimodal Analysis",
@@ -2796,7 +2796,7 @@ export const getUserDisputes = async (req, res) => {
         disputes: analyses.map(m => ({
           _id: m._id,
           type: "multimodal",
-          title: m.title || m.ai_summary?.title || "Multimodal Dispute",
+          dispute_name: m.dispute_name || m.ai_summary?.dispute_name || "Multimodal Dispute",
           status: m.status || "ai_summary",
           summary_text: m.summary_text || null,
           main_topic: m.ai_summary?.conflict_snapshot?.main_disagreement || m.ai_summary?.short_summary || "Multimodal Analysis",
@@ -2959,13 +2959,13 @@ export const analyzeMultimodalDispute = async (req, res) => {
 
     const aiSummary = await analyzeMultimodalContent(summaryText, summaryAudioFile, mediaFiles);
     const shortSummary = aiSummary?.short_summary || "";
-    const title = aiSummary?.title || "Multimodal Dispute";
+    const dispute_name = aiSummary?.dispute_name || "Multimodal Dispute";
     const responseSummary = { ...aiSummary };
     if (responseSummary.short_summary) {
       delete responseSummary.short_summary;
     }
-    if (responseSummary.title) {
-      delete responseSummary.title;
+    if (responseSummary.dispute_name) {
+      delete responseSummary.dispute_name;
     }
 
     const uploadedMedia = mediaFiles.map(file => ({
@@ -2975,7 +2975,7 @@ export const analyzeMultimodalDispute = async (req, res) => {
 
     const analysis = await MultimodalAnalysis.create({
       user_id: req.user._id,
-      title: title,
+      dispute_name: dispute_name,
       summary_text: summaryText || undefined,
       summary_audio_url: summaryAudioFile ? summaryAudioFile.path : undefined,
       uploaded_media: uploadedMedia,
@@ -2986,7 +2986,7 @@ export const analyzeMultimodalDispute = async (req, res) => {
     return res.json({
       success: true,
       message: "Multimodal dispute analyzed successfully.",
-      title: title,
+      dispute_name: dispute_name,
       ai_summary: responseSummary,
       short_summary: shortSummary,
       analysis_id: analysis._id

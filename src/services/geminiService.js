@@ -272,7 +272,7 @@ CRITICAL: Your output MUST be in valid JSON conforming to the following structur
     const textResponse = result.response.text();
     const parsed = parseJsonResponse(textResponse);
     return parsed || {
-      title: "Multimodal Dispute",
+      dispute_name: "Multimodal Dispute",
       short_summary: "Dispute Analysis Summary",
       conflict_snapshot: {
         main_disagreement: "Dispute Analysis",
