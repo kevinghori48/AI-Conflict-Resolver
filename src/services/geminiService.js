@@ -183,6 +183,7 @@ export const analyzeMultimodalContent = async (summaryText, summaryAudioFile, me
 
 CRITICAL: Your output MUST be in valid JSON conforming to the following structure. Generate fully custom, dynamic, and context-specific values based on your analysis of this specific conflict. Do NOT repeat or copy the example placeholder text verbatim:
 {
+  "short_summary": "A brief 1-2 sentence high-level summary of the overall conflict",
   "conflict_snapshot": {
     "main_disagreement": "Brief description of the main disagreement based on the inputs",
     "core_concerns": {
@@ -270,6 +271,7 @@ CRITICAL: Your output MUST be in valid JSON conforming to the following structur
     const textResponse = result.response.text();
     const parsed = parseJsonResponse(textResponse);
     return parsed || {
+      short_summary: "Dispute Analysis Summary",
       conflict_snapshot: {
         main_disagreement: "Dispute Analysis",
         core_concerns: { user_side: "Not specified", other_side: "Not specified" },

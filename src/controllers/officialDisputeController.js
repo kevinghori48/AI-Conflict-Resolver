@@ -2893,6 +2893,10 @@ export const analyzeMultimodalDispute = async (req, res) => {
     }
 
     const aiSummary = await analyzeMultimodalContent(summaryText, summaryAudioFile, mediaFiles);
+    const shortSummary = aiSummary?.short_summary || "";
+    if (aiSummary && aiSummary.short_summary) {
+      delete aiSummary.short_summary;
+    }
 
     const uploadedMedia = mediaFiles.map(file => ({
       file_path: file.path,
@@ -2911,6 +2915,7 @@ export const analyzeMultimodalDispute = async (req, res) => {
       success: true,
       message: "Multimodal dispute analyzed successfully.",
       ai_summary: aiSummary,
+      short_summary: shortSummary,
       analysis_id: analysis._id
     });
   } catch (err) {
