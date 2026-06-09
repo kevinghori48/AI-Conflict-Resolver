@@ -178,7 +178,7 @@ export const analyzeMultimodalContent = async (summaryText, summaryAudioFile, me
 
     // Prompt instructions
     parts.push({
-      text: "You are an expert dispute and conflict analysis AI. You are provided with conflict inputs from a user. Please analyze the text description, audio recordings, and any attached images/audio files to understand the situation fully, and generate a concise summary report explaining the core conflict, the parties involved, and key details. IMPORTANT: In your summary report, you MUST explicitly mention and reference the analyzed evidence files/images (if any are attached) and explain how they relate to the conflict."
+      text: "You are a dispute and conflict analysis helper. Please analyze the provided text description, audio recordings, and any attached images/audio files, and generate a simple, direct, and concise summary explaining strictly the facts of the conflict, the parties involved, and key details. Do NOT perform advanced analysis, do NOT guess emotions/motives, and do NOT make assumptions or deep speculations. Keep it simple and stick to what is directly visible or stated in the inputs."
     });
 
     // 1. Handle summary text if provided
