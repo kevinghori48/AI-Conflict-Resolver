@@ -178,7 +178,7 @@ export const analyzeMultimodalContent = async (summaryText, summaryAudioFile, me
 
     // Prompt instructions
     parts.push({
-      text: "You are an expert dispute and conflict analysis AI. You are provided with conflict inputs from a user. Please analyze the text description, audio recordings, and any attached images/audio files to understand the situation fully, and generate a concise summary report explaining the core conflict, the parties involved, and key details."
+      text: "You are an expert dispute and conflict analysis AI. You are provided with conflict inputs from a user. Please analyze the text description, audio recordings, and any attached images/audio files to understand the situation fully, and generate a concise summary report explaining the core conflict, the parties involved, and key details. IMPORTANT: In your summary report, you MUST explicitly mention and reference the analyzed evidence files/images (if any are attached) and explain how they relate to the conflict."
     });
 
     // 1. Handle summary text if provided
@@ -203,6 +203,7 @@ export const analyzeMultimodalContent = async (summaryText, summaryAudioFile, me
 
     // 2. Handle summary audio file if provided
     if (summaryAudioFile) {
+      console.log(`[analyzeMultimodalContent] Processing summary audio: ${summaryAudioFile.originalname || summaryAudioFile.path}`);
       const audioBuffer = fs.readFileSync(summaryAudioFile.path);
       const base64Audio = audioBuffer.toString("base64");
       const mime = getMimeType(summaryAudioFile.path);
@@ -217,10 +218,12 @@ export const analyzeMultimodalContent = async (summaryText, summaryAudioFile, me
 
     // 3. Handle mediaFiles array
     if (mediaFiles && mediaFiles.length > 0) {
+      console.log(`[analyzeMultimodalContent] Processing ${mediaFiles.length} media evidence files.`);
       for (const file of mediaFiles) {
+        const mime = getMimeType(file.path);
+        console.log(`[analyzeMultimodalContent] -> Loading file: ${file.originalname || file.path} (Mime: ${mime})`);
         const fileBuffer = fs.readFileSync(file.path);
         const base64Data = fileBuffer.toString("base64");
-        const mime = getMimeType(file.path);
         parts.push({
           inlineData: {
             mimeType: mime,
