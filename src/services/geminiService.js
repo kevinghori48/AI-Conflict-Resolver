@@ -14,18 +14,18 @@ const getAudioMimeType = (filePath) => {
 const parseJsonResponse = (text) => {
   try {
     return JSON.parse(text);
-  } catch (_) {}
+  } catch (_) { }
 
   const cleaned = text.replace(/```json/gi, "").replace(/```/g, "").trim();
   try {
     return JSON.parse(cleaned);
-  } catch (_) {}
+  } catch (_) { }
 
   const objectMatch = cleaned.match(/\{[\s\S]*\}/);
   if (objectMatch) {
     try {
       return JSON.parse(objectMatch[0]);
-    } catch (_) {}
+    } catch (_) { }
   }
 
   return null;
@@ -172,13 +172,35 @@ export const analyzeMultimodalContent = async (summaryText, summaryAudioFile, me
   try {
     const model = genAI.getGenerativeModel({
       model: "gemini-2.5-flash",
+      generationConfig: { responseMimeType: "application/json" }
     });
 
     const parts = [];
 
     // Prompt instructions
     parts.push({
-      text: "You are a dispute and conflict analysis helper. Please analyze the provided text description, audio recordings, and any attached images/audio files together. Generate a SINGLE, unified, and concise summary report that combines all of these inputs into one cohesive situation. Do NOT separate them into different conflict sections (e.g. do not create 'Conflict 1' and 'Conflict 2'). Treat the text description as the primary explanation and the attached files (images/audios) as the supporting evidence/context for that same conflict. Stick strictly to the visible/stated facts and explain the overall situation as one single conflict."
+      text: `You are a dispute and conflict analysis helper. Please analyze the provided text description, audio recordings, and any attached images/audio files together. Generate a SINGLE, unified, and concise summary report that combines all of these inputs into one cohesive situation. Do NOT separate them into different conflict sections. Treat the text description as the primary explanation and the attached files (images/audios) as the supporting evidence/context for that same conflict. Stick strictly to the visible/stated facts and explain the overall situation.
+
+CRITICAL: Your output MUST be in valid JSON conforming to the following structure:
+{
+  "conflict_snapshot": {
+    "main_disagreement": "Brief description of the main disagreement based on the inputs",
+    "core_concerns": {
+      "user_side": "Core concern of the user's side",
+      "other_side": "Core concern of the other side (from the proof or context)"
+    },
+    "overall_tone": "Overall tone of conversation (e.g. calm, defensive, angry, misunderstood, tense)"
+  },
+  "key_insights": [
+    "Identify 2-3 important patterns or insights from the conversation/evidence (e.g., 'You seem to be seeking reassurance, while your partner is seeking more independence.')"
+  ],
+  "hidden_tension": "One interesting hidden insight or underlying tension not explicitly mentioned (e.g., 'There may be an underlying trust concern that neither side explicitly mentioned.')",
+  "what_happens_next": [
+    "Teaser 1 (e.g., 'I\\'ve identified 4 communication patterns contributing to this conflict.')",
+    "Teaser 2 (e.g., 'There are 3 possible resolution paths based on the conversation.')",
+    "Teaser 3 (e.g., 'I can help you draft a response that reduces tension and improves understanding.')"
+  ]
+}`
     });
 
     // 1. Handle summary text if provided
@@ -244,10 +266,20 @@ export const analyzeMultimodalContent = async (summaryText, summaryAudioFile, me
       ]
     });
 
-    return result.response.text();
+    const textResponse = result.response.text();
+    const parsed = parseJsonResponse(textResponse);
+    return parsed || {
+      conflict_snapshot: {
+        main_disagreement: "Dispute Analysis",
+        core_concerns: { user_side: "Not specified", other_side: "Not specified" },
+        overall_tone: "Tense"
+      },
+      key_insights: [],
+      hidden_tension: "None detected",
+      what_happens_next: []
+    };
   } catch (error) {
     console.error("Gemini multimodal analysis error:", error);
     throw new Error("Failed to analyze multimodal content using Gemini: " + error.message);
   }
 };
-
