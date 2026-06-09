@@ -2056,17 +2056,23 @@ OUTPUT JSON:
     requireAuth("get_multimodal_chat_history", async ({ analysis_id }, callback) => {
       try {
         if (!analysis_id) {
-          if (callback) callback({ success: false, message: "analysis_id is required" });
+          const errRes = { success: false, message: "analysis_id is required" };
+          if (callback) callback(errRes);
+          socket.emit("multimodal_chat_history", errRes);
           return;
         }
         let chat = await MultimodalChat.findOne({ user_id: socket.userId, analysis_id });
         if (!chat) {
           chat = await MultimodalChat.create({ user_id: socket.userId, analysis_id, messages: [] });
         }
-        if (callback) callback({ success: true, messages: chat.messages });
+        const successRes = { success: true, messages: chat.messages };
+        if (callback) callback(successRes);
+        socket.emit("multimodal_chat_history", successRes);
       } catch (err) {
         console.error("Get multimodal chat history error:", err);
-        if (callback) callback({ success: false, message: "Failed to get history", error: err.message });
+        const failRes = { success: false, message: "Failed to get history", error: err.message };
+        if (callback) callback(failRes);
+        socket.emit("multimodal_chat_history", failRes);
       }
     });
 
