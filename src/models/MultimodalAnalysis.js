@@ -17,7 +17,7 @@ const multimodalAnalysisSchema = new mongoose.Schema({
     mime_type: { type: String, required: true }
   }],
   ai_summary: {
-    type: String,
+    type: Object,
     required: true
   }
 }, { timestamps: true });
