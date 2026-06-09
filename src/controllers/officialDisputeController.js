@@ -7,7 +7,8 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { execFile } from "child_process";
-import { transcribeAudio } from "../services/geminiService.js";
+import { transcribeAudio, analyzeMultimodalContent } from "../services/geminiService.js";
+import MultimodalAnalysis from "../models/MultimodalAnalysis.js";
 
 // Convert any audio file to MP3 using ffmpeg.
 const FFMPEG_PATH = process.env.FFMPEG_PATH || "ffmpeg";
@@ -19,14 +20,14 @@ const convertToMp3 = (inputPath, outputPath) =>
         console.error("[ffmpeg] stderr:", stderr);
         return reject(err);
       }
-      try { fs.unlinkSync(inputPath); } catch (_) {}
+      try { fs.unlinkSync(inputPath); } catch (_) { }
       resolve(outputPath);
     });
   });
 
 export const cleanAIResponse = (text) => {
   // 1. Try raw text first
-  try { return JSON.parse(text); } catch (_) {}
+  try { return JSON.parse(text); } catch (_) { }
 
   // 2. Strip markdown fences
   let cleaned = text
@@ -34,18 +35,18 @@ export const cleanAIResponse = (text) => {
     .replace(/```/g, "")
     .trim();
 
-  try { return JSON.parse(cleaned); } catch (_) {}
+  try { return JSON.parse(cleaned); } catch (_) { }
 
   // 3. Try extracting JSON object
   const objectMatch = cleaned.match(/\{[\s\S]*\}/);
   if (objectMatch) {
-    try { return JSON.parse(objectMatch[0]); } catch (_) {}
+    try { return JSON.parse(objectMatch[0]); } catch (_) { }
   }
 
   // 4. Try extracting JSON array
   const arrayMatch = cleaned.match(/\[[\s\S]*\]/);
   if (arrayMatch) {
-    try { return JSON.parse(arrayMatch[0]); } catch (_) {}
+    try { return JSON.parse(arrayMatch[0]); } catch (_) { }
   }
 
   // 5. Last resort — strip control characters
@@ -53,7 +54,7 @@ export const cleanAIResponse = (text) => {
 
   const sanitizedObject = sanitized.match(/\{[\s\S]*\}/);
   if (sanitizedObject) {
-    try { return JSON.parse(sanitizedObject[0]); } catch (_) {}
+    try { return JSON.parse(sanitizedObject[0]); } catch (_) { }
   }
 
   // Log the raw response so you can see exactly what Gemini returned
@@ -83,10 +84,10 @@ const escapeRegex = (value = "") =>
 const normalizeSensitiveTopics = (topics) =>
   Array.isArray(topics)
     ? [...new Set(
-        topics
-          .map((topic) => String(topic || "").trim())
-          .filter(Boolean)
-      )]
+      topics
+        .map((topic) => String(topic || "").trim())
+        .filter(Boolean)
+    )]
     : [];
 
 const ensureString = (value) => String(value || "").trim();
@@ -245,9 +246,9 @@ function decoratePlanWithHighlights(plan) {
     sensitive_topics: [],
     summary_html: highlightSensitiveText(normalizedPlan.summary, sensitiveTopics),
     action_steps: normalizedPlan.action_steps.map((step) => ({
-          ...step,
-          action_html: highlightSensitiveText(step?.action || "", sensitiveTopics)
-        })),
+      ...step,
+      action_html: highlightSensitiveText(step?.action || "", sensitiveTopics)
+    })),
     commitments_html: {
       creator: creatorCommitments.map((item) => highlightSensitiveText(item, sensitiveTopics)),
       joiner: joinerCommitments.map((item) => highlightSensitiveText(item, sensitiveTopics))
@@ -278,9 +279,9 @@ export async function buildDisputeTranscriptForAI(messages, creatorName = "Perso
 }
 
 async function waitForGeneratedDisputeContent(disputeId, isReady, options = {}) {
-  const timeoutMs  = options.timeoutMs  ?? AI_GENERATION_WAIT_TIMEOUT_MS;
+  const timeoutMs = options.timeoutMs ?? AI_GENERATION_WAIT_TIMEOUT_MS;
   const intervalMs = options.intervalMs ?? AI_GENERATION_POLL_INTERVAL_MS;
-  const deadline   = Date.now() + timeoutMs;
+  const deadline = Date.now() + timeoutMs;
 
   let dispute = await OfficialDispute.findById(disputeId);
 
@@ -310,15 +311,15 @@ async function callGroq(prompt) {
   const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: {
-      "Content-Type":  "application/json",
+      "Content-Type": "application/json",
       "Authorization": `Bearer ${process.env.GROQ_API_KEY}`
     },
     body: JSON.stringify({
-      model:       "llama-3.3-70b-versatile",
+      model: "llama-3.3-70b-versatile",
       temperature: 0,
       messages: [
         { role: "system", content: "You are a helpful assistant that responds only in valid JSON." },
-        { role: "user",   content: strictPrompt }
+        { role: "user", content: strictPrompt }
       ]
     })
   });
@@ -439,10 +440,14 @@ const RELATIONSHIP_QUESTIONS = {
     "What's the impact on your work?"
   ],
   other: [
-    "Please describe your relationship",
-    "What's the nature of this conflict?",
-    "How long has this been an issue?",
-    "What do you hope to achieve?"
+    // "Please describe your relationship",
+    // "What's the nature of this conflict?",
+    // "How long has this been an issue?",
+    // "What do you hope to achieve?"
+    "What have you already tried to resolve the situation?",
+    "How long has this situation been affecting your relationship?",
+    "How has this situation impacted your relationship?",
+    "What outcome are you hoping to achieve?"
   ]
 };
 
@@ -611,14 +616,14 @@ export const uploadAudio = async (req, res) => {
     // dispute_id and sender_role are intentionally omitted so Mongoose skips enum validation.
     // They are filled in when the send_audio socket event fires.
     const message = await DisputeMessage.create({
-      sender_id:    req.user._id,
+      sender_id: req.user._id,
       message_type: "audio",
       audio_data: {
-        file_path:     mp3Path,
+        file_path: mp3Path,
         original_name: file.originalname.replace(/\.[^.]+$/, "") + ".mp3",
-        mimetype:      "audio/mpeg",
-        size:          fs.statSync(mp3Path).size,
-        duration:      0,   // updated when send_audio socket event fires
+        mimetype: "audio/mpeg",
+        size: fs.statSync(mp3Path).size,
+        duration: 0,   // updated when send_audio socket event fires
         transcript
       },
       status: "sent"
@@ -1034,22 +1039,22 @@ export const reportSummary = async (req, res) => {
     // Store feedback only — no regeneration
     if (!dispute.ai_summary.feedback) dispute.ai_summary.feedback = [];
     dispute.ai_summary.feedback.push({
-      reporter_id:   req.user._id,
+      reporter_id: req.user._id,
       reporter_role: dispute.creator_id.toString() === req.user._id.toString() ? "creator" : "joiner",
-      feedback:      feedback.trim(),
-      reported_at:   new Date()
+      feedback: feedback.trim(),
+      reported_at: new Date()
     });
     await dispute.save();
 
     if (req.app.get("io")) {
       req.app.get("io").to(dispute_id).emit("summary_reported", {
-        status:         dispute.status,
-        message:        "Feedback recorded. Thank you.",
-        timestamp:      new Date(),
+        status: dispute.status,
+        message: "Feedback recorded. Thank you.",
+        timestamp: new Date(),
         reported_by: {
-          user_id:      req.user._id,
-          name:         `${req.user.firstName} ${req.user.lastName}`,
-          role:         dispute.creator_id.toString() === req.user._id.toString() ? "creator" : "joiner"
+          user_id: req.user._id,
+          name: `${req.user.firstName} ${req.user.lastName}`,
+          role: dispute.creator_id.toString() === req.user._id.toString() ? "creator" : "joiner"
         }
       });
     }
@@ -1112,13 +1117,13 @@ export const approveSummary = async (req, res) => {
         const allSockets = await req.app.get('io').in(dispute_id).fetchSockets();
         for (const s of allSockets) {
           s.emit("summary_approved", {
-            approved_by:      approverRole,
+            approved_by: approverRole,
             creator_approved: true,
-            joiner_approved:  true,
-            both_approved:    true,
-            your_approval:    true, // both approved — true for everyone
-            message:          "Both parties approved the summary.",
-            timestamp:        ts
+            joiner_approved: true,
+            both_approved: true,
+            your_approval: true, // both approved — true for everyone
+            message: "Both parties approved the summary.",
+            timestamp: ts
           });
         }
       }
@@ -1191,15 +1196,15 @@ export const approveSummary = async (req, res) => {
 
     if (req.app.get('io')) {
       const approverRole = isCreator ? "creator" : "joiner";
-      const io           = req.app.get('io');
-      const ts           = new Date();
-      const basePayload  = {
-        approved_by:      approverRole,
+      const io = req.app.get('io');
+      const ts = new Date();
+      const basePayload = {
+        approved_by: approverRole,
         creator_approved: updated.summary_approval.creator_approved,
-        joiner_approved:  updated.summary_approval.joiner_approved,
-        both_approved:    false,
-        message:          `${req.user.firstName} ${req.user.lastName} approved the summary. Waiting for the other party.`,
-        timestamp:        ts
+        joiner_approved: updated.summary_approval.joiner_approved,
+        both_approved: false,
+        message: `${req.user.firstName} ${req.user.lastName} approved the summary. Waiting for the other party.`,
+        timestamp: ts
       };
 
       // Emit individually so each socket gets its own your_approval value
@@ -1252,7 +1257,7 @@ export const getAISummary = async (req, res) => {
       if (dispute.status === "AI_SUMMARIZING") {
         return res.status(202).json({
           success: false,
-          status:  dispute.status,
+          status: dispute.status,
           message: "Summary is still being generated"
         });
       }
@@ -1392,7 +1397,7 @@ export const getSolutions = async (req, res) => {
       if (dispute.status === "AI_SUMMARIZING") {
         return res.status(202).json({
           success: false,
-          status:  dispute.status,
+          status: dispute.status,
           message: "Solutions are still being generated"
         });
       }
@@ -1433,10 +1438,10 @@ export const selectSolutions = async (req, res) => {
       return res.status(400).json({ message: `Invalid solution IDs: ${invalidSelections.join(", ")}` });
     }
 
-    const selectionField   = isCreator
+    const selectionField = isCreator
       ? "solution_selections.creator_selected"
       : "solution_selections.joiner_selected";
-    const confirmedField   = isCreator
+    const confirmedField = isCreator
       ? "solution_selections.creator_confirmed"
       : "solution_selections.joiner_confirmed";
 
@@ -1503,24 +1508,24 @@ export const selectSolutions = async (req, res) => {
       for (const s of allSockets) {
         const isCreatorSocket = s.userRole === "creator";
         s.emit("selection_update", {
-          selected_by:          isCreator ? "creator" : "joiner",
-          creator_confirmed:    updated.solution_selections.creator_confirmed,
-          joiner_confirmed:     updated.solution_selections.joiner_confirmed,
-          both_selected:        false,
-          you_confirmed:        isCreatorSocket ? updated.solution_selections.creator_confirmed : updated.solution_selections.joiner_confirmed,
-          other_confirmed:      isCreatorSocket ? updated.solution_selections.joiner_confirmed  : updated.solution_selections.creator_confirmed,
-          message:              "Selection confirmed. Waiting for other party.",
-          timestamp:            new Date()
+          selected_by: isCreator ? "creator" : "joiner",
+          creator_confirmed: updated.solution_selections.creator_confirmed,
+          joiner_confirmed: updated.solution_selections.joiner_confirmed,
+          both_selected: false,
+          you_confirmed: isCreatorSocket ? updated.solution_selections.creator_confirmed : updated.solution_selections.joiner_confirmed,
+          other_confirmed: isCreatorSocket ? updated.solution_selections.joiner_confirmed : updated.solution_selections.creator_confirmed,
+          message: "Selection confirmed. Waiting for other party.",
+          timestamp: new Date()
         });
       }
     }
 
     res.json({
-      success:           true,
-      message:           "Selection confirmed. Waiting for other party.",
-      your_selections:   selected_solution_ids,
+      success: true,
+      message: "Selection confirmed. Waiting for other party.",
+      your_selections: selected_solution_ids,
       creator_confirmed: updated.solution_selections.creator_confirmed,
-      joiner_confirmed:  updated.solution_selections.joiner_confirmed,
+      joiner_confirmed: updated.solution_selections.joiner_confirmed,
       waiting_for_other: true
     });
   } catch (err) {
@@ -1674,7 +1679,7 @@ export const getSuggestedPlan = async (req, res) => {
       if (dispute.status === "AI_SUMMARIZING") {
         return res.status(202).json({
           success: false,
-          status:  dispute.status,
+          status: dispute.status,
           message: "Suggested plan is still being generated"
         });
       }
@@ -1682,13 +1687,13 @@ export const getSuggestedPlan = async (req, res) => {
     }
 
     res.json({
-      success:        true,
+      success: true,
       suggested_plan: dispute.suggested_plan,
-      status:         dispute.status,
+      status: dispute.status,
       approval: {
         creator_approved: dispute.suggested_plan_approval?.creator_approved || false,
-        joiner_approved:  dispute.suggested_plan_approval?.joiner_approved  || false,
-        your_approval:    isCreator
+        joiner_approved: dispute.suggested_plan_approval?.joiner_approved || false,
+        your_approval: isCreator
           ? dispute.suggested_plan_approval?.creator_approved
           : dispute.suggested_plan_approval?.joiner_approved
       }
@@ -1766,8 +1771,8 @@ export const acceptSuggestedPlan = async (req, res) => {
           your_approval: s.userId === req.user._id.toString()
             ? true
             : (s.userRole === "creator"
-                ? dispute.suggested_plan_approval.creator_approved
-                : dispute.suggested_plan_approval.joiner_approved),
+              ? dispute.suggested_plan_approval.creator_approved
+              : dispute.suggested_plan_approval.joiner_approved),
           message: `${req.user.firstName} accepted the plan. Waiting for the other party.`,
           timestamp: new Date()
         });
@@ -1805,7 +1810,7 @@ export const rejectSuggestedPlan = async (req, res) => {
 
     const isCreator = dispute.creator_id.toString() === req.user._id.toString();
     const rejecterRole = isCreator ? "creator" : "joiner";
-    const otherRole    = isCreator ? "joiner"  : "creator";
+    const otherRole = isCreator ? "joiner" : "creator";
 
     // Determine if the other party had a pending acceptance that must be auto-cancelled
     const otherHadAccepted = isCreator
@@ -1815,32 +1820,32 @@ export const rejectSuggestedPlan = async (req, res) => {
     // Reset both acceptance flags and record who rejected
     dispute.suggested_plan_approval = {
       creator_approved: false,
-      joiner_approved:  false,
-      rejected_by:      rejecterRole
+      joiner_approved: false,
+      rejected_by: rejecterRole
     };
     dispute.status = "NEGOTIATION";
     await dispute.save();
 
     if (req.app.get("io")) {
       req.app.get("io").to(dispute_id).emit("negotiation_started", {
-        status:                  "NEGOTIATION",
-        rejected_by:             rejecterRole,
-        rejected_by_name:        `${req.user.firstName} ${req.user.lastName}`,
+        status: "NEGOTIATION",
+        rejected_by: rejecterRole,
+        rejected_by_name: `${req.user.firstName} ${req.user.lastName}`,
         cancelled_acceptance_of: otherHadAccepted ? otherRole : null,
-        reason:                  reason || "Party wants to negotiate further",
-        suggested_plan:          dispute.suggested_plan,
-        creator_selections:      dispute.solution_selections.creator_selected,
-        joiner_selections:       dispute.solution_selections.joiner_selected,
-        message:                 "Suggested plan rejected. Starting negotiation round.",
-        timestamp:               new Date()
+        reason: reason || "Party wants to negotiate further",
+        suggested_plan: dispute.suggested_plan,
+        creator_selections: dispute.solution_selections.creator_selected,
+        joiner_selections: dispute.solution_selections.joiner_selected,
+        message: "Suggested plan rejected. Starting negotiation round.",
+        timestamp: new Date()
       });
     }
 
     res.json({
-      success:                 true,
-      message:                 "Suggested plan rejected. Negotiation phase started.",
-      status:                  "NEGOTIATION",
-      rejected_by:             rejecterRole,
+      success: true,
+      message: "Suggested plan rejected. Negotiation phase started.",
+      status: "NEGOTIATION",
+      rejected_by: rejecterRole,
       cancelled_acceptance_of: otherHadAccepted ? otherRole : null
     });
   } catch (err) {
@@ -1862,7 +1867,7 @@ export const cancelAcceptance = async (req, res) => {
     }
 
     const isCreator = dispute.creator_id.toString() === req.user._id.toString();
-    const isJoiner  = dispute.joiner_id?.toString()  === req.user._id.toString();
+    const isJoiner = dispute.joiner_id?.toString() === req.user._id.toString();
 
     if (!isCreator && !isJoiner) {
       return res.status(403).json({ message: "Not a participant" });
@@ -1890,26 +1895,26 @@ export const cancelAcceptance = async (req, res) => {
 
     // Reset only this user's acceptance flag
     if (isCreator) dispute.suggested_plan_approval.creator_approved = false;
-    else           dispute.suggested_plan_approval.joiner_approved  = false;
+    else dispute.suggested_plan_approval.joiner_approved = false;
 
     await dispute.save();
 
     if (req.app.get("io")) {
       req.app.get("io").to(dispute_id).emit("acceptance_cancelled", {
-        cancelled_by:      role,
+        cancelled_by: role,
         cancelled_by_name: `${req.user.firstName} ${req.user.lastName}`,
-        creator_approved:  dispute.suggested_plan_approval.creator_approved,
-        joiner_approved:   dispute.suggested_plan_approval.joiner_approved,
-        message:           `${req.user.firstName} cancelled their acceptance of the plan.`,
-        timestamp:         new Date()
+        creator_approved: dispute.suggested_plan_approval.creator_approved,
+        joiner_approved: dispute.suggested_plan_approval.joiner_approved,
+        message: `${req.user.firstName} cancelled their acceptance of the plan.`,
+        timestamp: new Date()
       });
     }
 
     res.json({
-      success:          true,
-      message:          "Acceptance cancelled.",
+      success: true,
+      message: "Acceptance cancelled.",
       creator_approved: dispute.suggested_plan_approval.creator_approved,
-      joiner_approved:  dispute.suggested_plan_approval.joiner_approved
+      joiner_approved: dispute.suggested_plan_approval.joiner_approved
     });
   } catch (err) {
     console.error("Cancel acceptance error:", err);
@@ -2333,13 +2338,13 @@ export const approveFinalPlan = async (req, res) => {
 
     if (req.app.get('io')) {
       req.app.get('io').to(dispute_id).emit("plan_approval_update", {
-        approved_by:      isCreator ? "creator" : "joiner",
+        approved_by: isCreator ? "creator" : "joiner",
         approved_by_name: `${req.user.firstName} ${req.user.lastName}`,
         creator_approved: dispute.final_plan_approval.creator_approved,
-        joiner_approved:  dispute.final_plan_approval.joiner_approved,
-        both_approved:    false,
-        message:          `${req.user.firstName} approved the final plan. Waiting for the other party.`,
-        timestamp:        new Date()
+        joiner_approved: dispute.final_plan_approval.joiner_approved,
+        both_approved: false,
+        message: `${req.user.firstName} approved the final plan. Waiting for the other party.`,
+        timestamp: new Date()
       });
     }
 
@@ -2397,13 +2402,13 @@ export const reportFinalPlanIssue = async (req, res) => {
 
     if (req.app.get('io')) {
       req.app.get('io').to(dispute_id).emit("plan_reported", {
-        status:         dispute.status,
-        message:        "Plan issue reported. Thank you.",
-        timestamp:      new Date(),
+        status: dispute.status,
+        message: "Plan issue reported. Thank you.",
+        timestamp: new Date(),
         reported_by: {
-          user_id:      req.user._id,
-          name:         `${req.user.firstName} ${req.user.lastName}`,
-          role:         isCreator ? "creator" : "joiner"
+          user_id: req.user._id,
+          name: `${req.user.firstName} ${req.user.lastName}`,
+          role: isCreator ? "creator" : "joiner"
         }
       });
     }
@@ -2436,7 +2441,7 @@ export const getFinalPlan = async (req, res) => {
     if (!dispute) return res.status(404).json({ message: "Dispute not found" });
 
     const isCreator = dispute.creator_id.toString() === req.user._id.toString();
-    const isJoiner  = dispute.joiner_id?.toString()  === req.user._id.toString();
+    const isJoiner = dispute.joiner_id?.toString() === req.user._id.toString();
 
     if (!isCreator && !isJoiner) {
       return res.status(403).json({ message: "You are not authorized to view this plan" });
@@ -2451,7 +2456,7 @@ export const getFinalPlan = async (req, res) => {
       if (dispute.status === "AI_SUMMARIZING") {
         return res.status(202).json({
           success: false,
-          status:  dispute.status,
+          status: dispute.status,
           message: "Final plan is still being generated"
         });
       }
@@ -2459,13 +2464,13 @@ export const getFinalPlan = async (req, res) => {
     }
 
     res.json({
-      success:    true,
-      status:     dispute.status,
+      success: true,
+      status: dispute.status,
       final_plan: dispute.final_plan,
       approval: {
         creator_approved: dispute.final_plan_approval?.creator_approved || false,
-        joiner_approved:  dispute.final_plan_approval?.joiner_approved  || false,
-        your_approval:    isCreator
+        joiner_approved: dispute.final_plan_approval?.joiner_approved || false,
+        your_approval: isCreator
           ? dispute.final_plan_approval?.creator_approved
           : dispute.final_plan_approval?.joiner_approved
       }
@@ -2518,7 +2523,7 @@ export const getUserDisputes = async (req, res) => {
       type,
       status,
       startDate,
-      page  = 1,
+      page = 1,
       limit = 10
     } = req.query;
 
@@ -2527,22 +2532,22 @@ export const getUserDisputes = async (req, res) => {
       return res.status(400).json({ message: "Invalid type. Must be one of: major, minor, call" });
     }
 
-    const pageNum  = Math.max(1, parseInt(page));
+    const pageNum = Math.max(1, parseInt(page));
     const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
-    const skip     = (pageNum - 1) * limitNum;
+    const skip = (pageNum - 1) * limitNum;
 
     // No type provided — return all disputes from all 3 collections combined
     if (!type) {
       const majorQuery = { $or: [{ creator_id: req.user._id }, { joiner_id: req.user._id }] };
       const minorQuery = { $or: [{ creator_id: req.user._id }, { joiner_id: req.user._id }] };
-      const callQuery  = { user_id: req.user._id };
+      const callQuery = { user_id: req.user._id };
 
       if (startDate) {
         const from = new Date(startDate);
         if (!isNaN(from)) {
           majorQuery.createdAt = { $gte: from };
           minorQuery.createdAt = { $gte: from };
-          callQuery.createdAt  = { $gte: from };
+          callQuery.createdAt = { $gte: from };
         }
       }
 
@@ -2562,54 +2567,54 @@ export const getUserDisputes = async (req, res) => {
 
       const allDisputes = [
         ...majorDisputes.map(d => ({
-          _id:               d._id,
-          type:              "major",
-          dispute_name:      d.dispute_name,
-          status:            d.status,
-          invite_code:       d.invite_code,
+          _id: d._id,
+          type: "major",
+          dispute_name: d.dispute_name,
+          status: d.status,
+          invite_code: d.invite_code,
           relationship_type: d.intake_data?.relationship_type,
-          main_topic:        d.ai_summary?.main_topic || null,
-          creator:           d.creator_id,
-          joiner:            d.joiner_id,
-          createdAt:         d.createdAt,
-          updatedAt:         d.updatedAt
+          main_topic: d.ai_summary?.main_topic || null,
+          creator: d.creator_id,
+          joiner: d.joiner_id,
+          createdAt: d.createdAt,
+          updatedAt: d.updatedAt
         })),
         ...minorDisputes.map(d => ({
-          _id:         d._id,
-          type:        "minor",
-          status:      d.status,
+          _id: d._id,
+          type: "minor",
+          status: d.status,
           invite_code: d.invite_code,
-          creator:     d.creator_id,
-          joiner:      d.joiner_id,
-          result:      d.result || null,
-          createdAt:   d.createdAt
+          creator: d.creator_id,
+          joiner: d.joiner_id,
+          result: d.result || null,
+          createdAt: d.createdAt
         })),
         ...callReports.map(r => ({
-          _id:               r._id,
-          type:              "call",
-          title:             r.title,
+          _id: r._id,
+          type: "call",
+          title: r.title,
           conversation_type: r.conversation_type,
-          conflict_score:    r.conflict_score,
-          objective:         r.objective,
-          createdAt:         r.createdAt
+          conflict_score: r.conflict_score,
+          objective: r.objective,
+          createdAt: r.createdAt
         }))
       ].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
       // Apply pagination on combined results
-      const total      = allDisputes.length;
+      const total = allDisputes.length;
       const totalPages = Math.ceil(total / limitNum);
-      const paginated  = allDisputes.slice(skip, skip + limitNum);
+      const paginated = allDisputes.slice(skip, skip + limitNum);
 
       return res.json({
-        success:     true,
-        type:        "all",
-        count:       paginated.length,
+        success: true,
+        type: "all",
+        count: paginated.length,
         total,
-        page:        pageNum,
+        page: pageNum,
         total_pages: totalPages,
-        has_next:    pageNum < totalPages,
-        has_prev:    pageNum > 1,
-        disputes:    paginated
+        has_next: pageNum < totalPages,
+        has_prev: pageNum > 1,
+        disputes: paginated
       });
     }
 
@@ -2640,26 +2645,26 @@ export const getUserDisputes = async (req, res) => {
       const totalPages = Math.ceil(total / limitNum);
 
       return res.json({
-        success:     true,
-        type:        "major",
-        count:       disputes.length,
+        success: true,
+        type: "major",
+        count: disputes.length,
         total,
-        page:        pageNum,
+        page: pageNum,
         total_pages: totalPages,
-        has_next:    pageNum < totalPages,
-        has_prev:    pageNum > 1,
-        disputes:    disputes.map(d => ({
-          _id:               d._id,
-          type:              "major",
-          dispute_name:      d.dispute_name,
-          status:            d.status,
-          invite_code:       d.invite_code,
+        has_next: pageNum < totalPages,
+        has_prev: pageNum > 1,
+        disputes: disputes.map(d => ({
+          _id: d._id,
+          type: "major",
+          dispute_name: d.dispute_name,
+          status: d.status,
+          invite_code: d.invite_code,
           relationship_type: d.intake_data?.relationship_type,
-          main_topic:        d.ai_summary?.main_topic || null,
-          creator:           d.creator_id,
-          joiner:            d.joiner_id,
-          createdAt:         d.createdAt,
-          updatedAt:         d.updatedAt
+          main_topic: d.ai_summary?.main_topic || null,
+          creator: d.creator_id,
+          joiner: d.joiner_id,
+          createdAt: d.createdAt,
+          updatedAt: d.updatedAt
         }))
       });
     }
@@ -2688,23 +2693,23 @@ export const getUserDisputes = async (req, res) => {
       const totalPages = Math.ceil(total / limitNum);
 
       return res.json({
-        success:     true,
-        type:        "minor",
-        count:       disputes.length,
+        success: true,
+        type: "minor",
+        count: disputes.length,
         total,
-        page:        pageNum,
+        page: pageNum,
         total_pages: totalPages,
-        has_next:    pageNum < totalPages,
-        has_prev:    pageNum > 1,
-        disputes:    disputes.map(d => ({
-          _id:         d._id,
-          type:        "minor",
-          status:      d.status,
+        has_next: pageNum < totalPages,
+        has_prev: pageNum > 1,
+        disputes: disputes.map(d => ({
+          _id: d._id,
+          type: "minor",
+          status: d.status,
           invite_code: d.invite_code,
-          creator:     d.creator_id,
-          joiner:      d.joiner_id,
-          result:      d.result || null,
-          createdAt:   d.createdAt
+          creator: d.creator_id,
+          joiner: d.joiner_id,
+          result: d.result || null,
+          createdAt: d.createdAt
         }))
       });
     }
@@ -2729,22 +2734,22 @@ export const getUserDisputes = async (req, res) => {
       const totalPages = Math.ceil(total / limitNum);
 
       return res.json({
-        success:     true,
-        type:        "call",
-        count:       reports.length,
+        success: true,
+        type: "call",
+        count: reports.length,
         total,
-        page:        pageNum,
+        page: pageNum,
         total_pages: totalPages,
-        has_next:    pageNum < totalPages,
-        has_prev:    pageNum > 1,
-        disputes:    reports.map(r => ({
-          _id:               r._id,
-          type:              "call",
-          title:             r.title,
+        has_next: pageNum < totalPages,
+        has_prev: pageNum > 1,
+        disputes: reports.map(r => ({
+          _id: r._id,
+          type: "call",
+          title: r.title,
           conversation_type: r.conversation_type,
-          conflict_score:    r.conflict_score,
-          objective:         r.objective,
-          createdAt:         r.createdAt
+          conflict_score: r.conflict_score,
+          objective: r.objective,
+          createdAt: r.createdAt
         }))
       });
     }
@@ -2768,7 +2773,7 @@ export const getMyDisputeDetails = async (req, res) => {
 
     if (major) {
       const isCreator = major.creator_id._id.toString() === req.user._id.toString();
-      const isJoiner  = major.joiner_id?._id.toString()  === req.user._id.toString();
+      const isJoiner = major.joiner_id?._id.toString() === req.user._id.toString();
 
       if (!isCreator && !isJoiner) {
         return res.status(403).json({ message: "You are not authorized to view this dispute" });
@@ -2778,11 +2783,11 @@ export const getMyDisputeDetails = async (req, res) => {
       delete disputeObj.conversation.messages;
 
       return res.json({
-        success:    true,
-        type:       "major",
-        user_role:  isCreator ? "creator" : "joiner",
+        success: true,
+        type: "major",
+        user_role: isCreator ? "creator" : "joiner",
         is_creator: isCreator,
-        dispute:    disputeObj
+        dispute: disputeObj
       });
     }
 
@@ -2793,18 +2798,18 @@ export const getMyDisputeDetails = async (req, res) => {
 
     if (minor) {
       const isCreator = minor.creator_id._id.toString() === req.user._id.toString();
-      const isJoiner  = minor.joiner_id?._id.toString()  === req.user._id.toString();
+      const isJoiner = minor.joiner_id?._id.toString() === req.user._id.toString();
 
       if (!isCreator && !isJoiner) {
         return res.status(403).json({ message: "You are not authorized to view this dispute" });
       }
 
       return res.json({
-        success:    true,
-        type:       "minor",
-        user_role:  isCreator ? "creator" : "joiner",
+        success: true,
+        type: "minor",
+        user_role: isCreator ? "creator" : "joiner",
         is_creator: isCreator,
-        dispute:    minor
+        dispute: minor
       });
     }
 
@@ -2818,7 +2823,7 @@ export const getMyDisputeDetails = async (req, res) => {
 
       return res.json({
         success: true,
-        type:    "call",
+        type: "call",
         dispute: report
       });
     }
@@ -2870,3 +2875,47 @@ export const deleteDispute = async (req, res) => {
     res.status(500).json({ message: "Failed to delete dispute", error: err.message });
   }
 };
+
+export const analyzeMultimodalDispute = async (req, res) => {
+  try {
+    const summaryText = req.body.summary_text || req.body.summaryText || "";
+    const summaryAudioFile = req.files?.["summary"]?.[0];
+    const mediaFiles = req.files?.["uploads"] || [];
+
+    if (!summaryText && !summaryAudioFile && mediaFiles.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "At least one input (summary text, summary audio, or uploaded media) is required."
+      });
+    }
+
+    const aiSummary = await analyzeMultimodalContent(summaryText, summaryAudioFile, mediaFiles);
+
+    const uploadedMedia = mediaFiles.map(file => ({
+      file_path: file.path,
+      mime_type: file.mimetype
+    }));
+
+    const analysis = await MultimodalAnalysis.create({
+      user_id: req.user._id,
+      summary_text: summaryText || undefined,
+      summary_audio_url: summaryAudioFile ? summaryAudioFile.path : undefined,
+      uploaded_media: uploadedMedia,
+      ai_summary: aiSummary
+    });
+
+    return res.json({
+      success: true,
+      message: "Multimodal dispute analyzed successfully.",
+      analysis
+    });
+  } catch (err) {
+    console.error("Multimodal analysis error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to analyze multimodal dispute.",
+      error: err.message
+    });
+  }
+};
+

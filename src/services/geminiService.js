@@ -167,3 +167,84 @@ export const transcribeAudio = async (filePath) => {
 
   return null;
 };
+
+export const analyzeMultimodalContent = async (summaryText, summaryAudioFile, mediaFiles) => {
+  try {
+    const model = genAI.getGenerativeModel({
+      model: "gemini-2.5-flash",
+    });
+
+    const parts = [];
+
+    // Prompt instructions
+    parts.push({
+      text: "You are an expert dispute and conflict analysis AI. You are provided with conflict inputs from a user. Please analyze the text description, audio recordings, and any attached images/audio files to understand the situation fully, and generate a concise summary report explaining the core conflict, the parties involved, and key details."
+    });
+
+    // 1. Handle summary text if provided
+    if (summaryText) {
+      parts.push({ text: `Summary Text/Context: ${summaryText}` });
+    }
+
+    // Helper to get mime type for all media files (image & audio)
+    const getMimeType = (filePath) => {
+      const ext = path.extname(filePath).toLowerCase();
+      if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
+      if (ext === ".png") return "image/png";
+      if (ext === ".webp") return "image/webp";
+      if (ext === ".gif") return "image/gif";
+      if (ext === ".wav") return "audio/wav";
+      if (ext === ".m4a") return "audio/m4a";
+      if (ext === ".ogg") return "audio/ogg";
+      if (ext === ".webm") return "audio/webm";
+      if (ext === ".mp3") return "audio/mpeg";
+      return "application/octet-stream";
+    };
+
+    // 2. Handle summary audio file if provided
+    if (summaryAudioFile) {
+      const audioBuffer = fs.readFileSync(summaryAudioFile.path);
+      const base64Audio = audioBuffer.toString("base64");
+      const mime = getMimeType(summaryAudioFile.path);
+      parts.push({
+        inlineData: {
+          mimeType: mime,
+          data: base64Audio
+        }
+      });
+      parts.push({ text: "The audio above is the primary summary explanation provided by the user." });
+    }
+
+    // 3. Handle mediaFiles array
+    if (mediaFiles && mediaFiles.length > 0) {
+      for (const file of mediaFiles) {
+        const fileBuffer = fs.readFileSync(file.path);
+        const base64Data = fileBuffer.toString("base64");
+        const mime = getMimeType(file.path);
+        parts.push({
+          inlineData: {
+            mimeType: mime,
+            data: base64Data
+          }
+        });
+        parts.push({ text: `Above is an attached evidence/media file of type ${mime}.` });
+      }
+    }
+
+    // Call Gemini
+    const result = await model.generateContent({
+      contents: [
+        {
+          role: "user",
+          parts: parts
+        }
+      ]
+    });
+
+    return result.response.text();
+  } catch (error) {
+    console.error("Gemini multimodal analysis error:", error);
+    throw new Error("Failed to analyze multimodal content using Gemini: " + error.message);
+  }
+};
+

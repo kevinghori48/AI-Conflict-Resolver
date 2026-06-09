@@ -64,4 +64,15 @@ router.delete("/delete/:dispute_id", auth, controller.deleteDispute);
 // AI SUMMARY ENDPOINT
 router.post("/summary/get", auth, controller.getAISummary);
 
+// MULTIMODAL ANALYSIS ENDPOINT
+router.post(
+  "/analyze-multimodal",
+  auth,
+  upload.fields([
+    { name: "summary", maxCount: 1 },
+    { name: "uploads", maxCount: 10 }
+  ]),
+  controller.analyzeMultimodalDispute
+);
+
 export default router;
