@@ -19,7 +19,17 @@ const multimodalAnalysisSchema = new mongoose.Schema({
   ai_summary: {
     type: Object,
     required: true
-  }
+  },
+  title: {
+    type: String
+  },
+  status: {
+    type: String,
+    enum: ["ai_summary", "active_chat"],
+    default: "ai_summary"
+  },
+
+
 }, { timestamps: true });
 
 export default mongoose.model("MultimodalAnalysis", multimodalAnalysisSchema);

@@ -2604,6 +2604,8 @@ export const getUserDisputes = async (req, res) => {
         ...multimodalAnalyses.map(m => ({
           _id: m._id,
           type: "multimodal",
+          title: m.title || m.ai_summary?.title || "Multimodal Dispute",
+          status: m.status || "ai_summary",
           summary_text: m.summary_text || null,
           main_topic: m.ai_summary?.conflict_snapshot?.main_disagreement || m.ai_summary?.short_summary || "Multimodal Analysis",
           createdAt: m.createdAt
@@ -2794,6 +2796,8 @@ export const getUserDisputes = async (req, res) => {
         disputes: analyses.map(m => ({
           _id: m._id,
           type: "multimodal",
+          title: m.title || m.ai_summary?.title || "Multimodal Dispute",
+          status: m.status || "ai_summary",
           summary_text: m.summary_text || null,
           main_topic: m.ai_summary?.conflict_snapshot?.main_disagreement || m.ai_summary?.short_summary || "Multimodal Analysis",
           createdAt: m.createdAt
@@ -2955,9 +2959,13 @@ export const analyzeMultimodalDispute = async (req, res) => {
 
     const aiSummary = await analyzeMultimodalContent(summaryText, summaryAudioFile, mediaFiles);
     const shortSummary = aiSummary?.short_summary || "";
+    const title = aiSummary?.title || "Multimodal Dispute";
     const responseSummary = { ...aiSummary };
     if (responseSummary.short_summary) {
       delete responseSummary.short_summary;
+    }
+    if (responseSummary.title) {
+      delete responseSummary.title;
     }
 
     const uploadedMedia = mediaFiles.map(file => ({
@@ -2967,15 +2975,18 @@ export const analyzeMultimodalDispute = async (req, res) => {
 
     const analysis = await MultimodalAnalysis.create({
       user_id: req.user._id,
+      title: title,
       summary_text: summaryText || undefined,
       summary_audio_url: summaryAudioFile ? summaryAudioFile.path : undefined,
       uploaded_media: uploadedMedia,
-      ai_summary: aiSummary
+      ai_summary: aiSummary,
+      status: "ai_summary"
     });
 
     return res.json({
       success: true,
       message: "Multimodal dispute analyzed successfully.",
+      title: title,
       ai_summary: responseSummary,
       short_summary: shortSummary,
       analysis_id: analysis._id

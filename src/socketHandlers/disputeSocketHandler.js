@@ -2123,6 +2123,11 @@ OUTPUT JSON:
           return;
         }
 
+        if (analysis.status === "ai_summary") {
+          analysis.status = "active_chat";
+          await analysis.save();
+        }
+
         let chat = await MultimodalChat.findOne({ user_id: socket.userId, analysis_id });
         if (!chat) {
           chat = await MultimodalChat.create({ user_id: socket.userId, analysis_id, messages: [] });
