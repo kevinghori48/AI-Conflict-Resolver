@@ -2959,6 +2959,7 @@ export const analyzeMultimodalDispute = async (req, res) => {
 
     const aiSummary = await analyzeMultimodalContent(summaryText, summaryAudioFile, mediaFiles);
     const shortSummary = aiSummary?.short_summary || "";
+    // Gemini now generates "dispute_name" directly in its JSON response
     const dispute_name = aiSummary?.dispute_name || "Multimodal Dispute";
     const responseSummary = { ...aiSummary };
     if (responseSummary.short_summary) {
