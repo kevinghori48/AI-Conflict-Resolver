@@ -197,11 +197,9 @@ CRITICAL: Your output MUST be in valid JSON conforming to the following structur
     "Custom pattern or insight 1 detected from this conversation/evidence",
     "Custom pattern or insight 2 detected from this conversation/evidence"
   ],
-  "hidden_tension": "One interesting custom hidden insight or underlying tension not explicitly mentioned in this conflict",
+  "hidden_tension": "One interesting custom hidden insight or underlying tension not explicitly mentioned in this conflict, or null if no hidden tension is detected",
   "what_happens_next": [
-    "A custom teaser about identified communication patterns specific to this conflict (e.g., 'I\\'ve identified N communication patterns contributing to this conflict.')",
-    "A custom teaser about possible resolution paths specific to this conflict (e.g., 'There are N possible resolution paths based on the conversation.')",
-    "A custom teaser about drafting responses or reducing tension specific to this conflict"
+    "One or more dynamic custom teasers or next steps specific to this conflict (e.g., communication patterns, possible resolution paths, drafting responses, or reducing tension). This list can contain any number of relevant items (can be fewer or more than 3 items, as appropriate for the conflict)."
   ]
 }`
     });
