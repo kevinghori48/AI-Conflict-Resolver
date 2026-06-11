@@ -9,6 +9,7 @@ import path from "path";
 import { execFile } from "child_process";
 import { transcribeAudio, analyzeMultimodalContent } from "../services/geminiService.js";
 import MultimodalAnalysis from "../models/MultimodalAnalysis.js";
+import MultimodalChat from "../models/MultimodalChat.js";
 
 // Convert any audio file to MP3 using ffmpeg.
 const FFMPEG_PATH = process.env.FFMPEG_PATH || "ffmpeg";
@@ -2905,41 +2906,97 @@ export const deleteDispute = async (req, res) => {
   try {
     const { dispute_id } = req.params;
 
+    // 1. Try finding in OfficialDispute
     const dispute = await OfficialDispute.findById(dispute_id);
-    if (!dispute) return res.status(404).json({ message: "Dispute not found" });
-
-    if (dispute.creator_id.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: "Only the dispute creator can delete it" });
-    }
-
-    if (dispute.status === "COMPLETED") {
-      return res.status(400).json({ message: "Cannot delete completed disputes" });
-    }
-
-    const audioMessages = await DisputeMessage.find({ dispute_id, message_type: "audio" });
-    for (const msg of audioMessages) {
-      if (msg.audio_data?.file_path && fs.existsSync(msg.audio_data.file_path)) {
-        try { fs.unlinkSync(msg.audio_data.file_path); }
-        catch (e) { console.error(`Failed to delete audio file: ${msg.audio_data.file_path}`, e); }
+    if (dispute) {
+      if (dispute.creator_id.toString() !== req.user._id.toString()) {
+        return res.status(403).json({ message: "Only the dispute creator can delete it" });
       }
+
+      if (dispute.status === "COMPLETED") {
+        return res.status(400).json({ message: "Cannot delete completed disputes" });
+      }
+
+      const audioMessages = await DisputeMessage.find({ dispute_id, message_type: "audio" });
+      for (const msg of audioMessages) {
+        if (msg.audio_data?.file_path && fs.existsSync(msg.audio_data.file_path)) {
+          try { fs.unlinkSync(msg.audio_data.file_path); }
+          catch (e) { console.error(`Failed to delete audio file: ${msg.audio_data.file_path}`, e); }
+        }
+      }
+
+      await DisputeMessage.deleteMany({ dispute_id });
+      await OfficialDispute.findByIdAndDelete(dispute_id);
+
+      if (req.app.get('io')) {
+        req.app.get('io').to(dispute_id).emit("dispute_deleted", {
+          message: "This dispute has been deleted by the creator",
+          timestamp: new Date()
+        });
+      }
+
+      return res.json({ success: true, message: "Dispute deleted successfully" });
     }
 
-    await DisputeMessage.deleteMany({ dispute_id });
-    await OfficialDispute.findByIdAndDelete(dispute_id);
+    // 2. Try finding in MultimodalAnalysis
+    const multimodal = await MultimodalAnalysis.findById(dispute_id);
+    if (multimodal) {
+      if (multimodal.user_id.toString() !== req.user._id.toString()) {
+        return res.status(403).json({ message: "Only the dispute creator can delete it" });
+      }
 
-    if (req.app.get('io')) {
-      req.app.get('io').to(dispute_id).emit("dispute_deleted", {
-        message: "This dispute has been deleted by the creator",
-        timestamp: new Date()
-      });
+      // Delete uploaded_media files if they exist
+      if (multimodal.uploaded_media && Array.isArray(multimodal.uploaded_media)) {
+        for (const media of multimodal.uploaded_media) {
+          if (media.file_path && fs.existsSync(media.file_path)) {
+            try { fs.unlinkSync(media.file_path); }
+            catch (e) { console.error(`Failed to delete multimodal media file: ${media.file_path}`, e); }
+          }
+        }
+      }
+
+      // Delete summary_audio_url file if it exists
+      if (multimodal.summary_audio_url && fs.existsSync(multimodal.summary_audio_url)) {
+        try { fs.unlinkSync(multimodal.summary_audio_url); }
+        catch (e) { console.error(`Failed to delete multimodal summary audio file: ${multimodal.summary_audio_url}`, e); }
+      }
+
+      // Delete associated MultimodalChat
+      await MultimodalChat.deleteMany({ analysis_id: dispute_id });
+
+      // Delete MultimodalAnalysis
+      await MultimodalAnalysis.findByIdAndDelete(dispute_id);
+
+      return res.json({ success: true, message: "Multimodal dispute deleted successfully" });
     }
 
-    res.json({ success: true, message: "Dispute deleted successfully" });
+    // 3. Try finding in SmallDispute
+    const smallDispute = await SmallDispute.findById(dispute_id);
+    if (smallDispute) {
+      if (smallDispute.creator_id.toString() !== req.user._id.toString()) {
+        return res.status(403).json({ message: "Only the dispute creator can delete it" });
+      }
+      await SmallDispute.findByIdAndDelete(dispute_id);
+      return res.json({ success: true, message: "Small dispute deleted successfully" });
+    }
+
+    // 4. Try finding in Report (Call)
+    const report = await Report.findById(dispute_id);
+    if (report) {
+      if (report.user_id.toString() !== req.user._id.toString()) {
+        return res.status(403).json({ message: "Only the report creator can delete it" });
+      }
+      await Report.findByIdAndDelete(dispute_id);
+      return res.json({ success: true, message: "Call report deleted successfully" });
+    }
+
+    return res.status(404).json({ message: "Dispute not found" });
   } catch (err) {
     console.error("Delete dispute error:", err);
     res.status(500).json({ message: "Failed to delete dispute", error: err.message });
   }
 };
+
 
 export const analyzeMultimodalDispute = async (req, res) => {
   try {
