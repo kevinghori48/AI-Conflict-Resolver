@@ -2967,7 +2967,7 @@ export const deleteDispute = async (req, res) => {
       // Delete MultimodalAnalysis
       await MultimodalAnalysis.findByIdAndDelete(dispute_id);
 
-      return res.json({ success: true, message: "Multimodal dispute deleted successfully" });
+      return res.json({ success: true, message: "Dispute deleted successfully" });
     }
 
     // 3. Try finding in SmallDispute
