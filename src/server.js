@@ -3,10 +3,14 @@ import http from "http";
 import { Server } from "socket.io";
 import app from "./app.js";
 import { setupDisputeSocket } from "./socketHandlers/disputeSocketHandler.js";
+import connectDB from "./config/db.js";
 
 dotenv.config();
 
 console.log("Loaded MONGO_URI:", process.env.MONGO_URI);
+
+// Connect to MongoDB (after dotenv has loaded env vars)
+connectDB();
 
 const PORT = process.env.PORT || 5001;
 
@@ -14,15 +18,21 @@ const PORT = process.env.PORT || 5001;
 const server = http.createServer(app);
 
 // 2. INITIALIZE SOCKET.IO
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(",")
+  : "*";
+
 const io = new Server(server, {
   cors: {
-    origin: "*", // Allow all origins for now
-    methods: ["GET", "POST", "PUT", "DELETE"],
-    credentials: true
+    origin: allowedOrigins,
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: allowedOrigins !== "*"
   },
   pingTimeout: 60000,
   pingInterval: 25000,
-  transports: ['websocket', 'polling']
+  transports: ['websocket', 'polling'],
+  allowEIO3: true
 });
 
 console.log("Socket.IO initialized");
