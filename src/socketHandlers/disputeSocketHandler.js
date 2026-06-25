@@ -20,7 +20,18 @@ export const setupDisputeSocket = (io) => {
   // AUTHENTICATION MIDDLEWARE
   io.use(async (socket, next) => {
     try {
-      const token = socket.handshake.auth.token || socket.handshake.query.token;
+      let token =
+        socket.handshake.auth?.token ||
+        socket.handshake.query?.token ||
+        socket.handshake.headers?.authorization ||
+        socket.handshake.headers?.token;
+
+      if (token && typeof token === "string") {
+        if (token.toLowerCase().startsWith("bearer ")) {
+          token = token.substring(7);
+        }
+      }
+
       if (token) {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         socket.userId = decoded._id;
@@ -36,7 +47,7 @@ export const setupDisputeSocket = (io) => {
       next();
     } catch (err) {
       socket.authenticated = false;
-      console.log("Socket auth failed");
+      console.log("Socket auth failed:", err.message);
       next();
     }
   });
