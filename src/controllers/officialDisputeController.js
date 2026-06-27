@@ -1496,7 +1496,7 @@ export const selectSolutions = async (req, res) => {
 
       return res.json({
         success: true,
-        message: "Both parties have selected. Generating suggested plan...",
+        message: "Both partners have selected. AI is generating the recommended action plan...",
         status: "AI_SUMMARIZING",
         creator_selections: creatorVotes,
         joiner_selections: joinerVotes
